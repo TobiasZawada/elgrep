@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2015  Tobias Zawada
 
-;; Author: Tobias Zawada <naehring@smtp.1und1.de>
+;; Author: Tobias Zawada <i@tn-home.de>
 ;; Keywords: tools, matching, files, unix
 
 ;; This program is free software; you can redistribute it and/or modify
