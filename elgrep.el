@@ -20,6 +20,10 @@
 
 ;;; Commentary:
 
+;; Open the `elgrep-menu' via menu item "Tools" -> "Search files (Elgrep)...".
+;; There are menu items for the directory, the file name regexp for filtering
+;; and the regexp for grepping. Furthermore, you can also switch on recursive grep.
+;;
 ;; Run M-x elgrep to search a single directory for files with file
 ;; name matching a given regular expression for text matching a given
 ;; regular expression. With prefix arg it searches the directory
@@ -31,12 +35,13 @@
 (eval-when-compile
   (require 'wid-edit))
 
+(require 'cl-lib)
+(require 'easymenu)
+
 (defvar elgrep-file-name-re-hist nil
   "History of file-name regular expressions for `elgrep' (which see).")
 (defvar elgrep-re-hist nil
   "History of regular expressions for `elgrep' (which see).")
-
-(autoload 'max-el "lispTZA")
 
 (defun elgrep-insert-file-contents (filename &optional visit)
   "Like `insert-file-contents' but uses `pdftotext' (poppler) for pdf-files (with file extension pdf)."
@@ -93,7 +98,7 @@ Keywords supported: :test"
   (unless dir (setq dir default-directory))
   (let* ((filelist (cl-delete-if (lambda (file) (string-match "\\.\\(~\\|bak\\)$" file))
 				 (directory-files dir)))
-	 (ext (car-safe (max-el (classify 'file-name-extension filelist) :test (lambda (x y) (> (length x) (length y))))));; most often used extension
+	 (ext (car-safe (cl-reduce (lambda (x y) (if (> (length x) (length y)) x y)) (classify 'file-name-extension filelist))));; most often used extension
 	 )
     (concat "\\." ext "$")))
 
@@ -109,31 +114,56 @@ Keywords supported: :test"
 	      :recursive (widget-value w-recursive)
 	      :interactive t))))
 
-(defun elgrep-menu ()
+(defmacro elgrep-menu-with-buttons (buttons &rest body)
+  "Execute body with keymaps for widgets.
+BUTTONS is a list of button definitions (KEYMAP-NAME FUNCTION).
+See definition of `elgrep-menu' for an example."
+  (declare (debug (expr &rest form))
+	   (indent 1))
+  (append (list #'let (mapcar (lambda (button)
+				(list (car button) '(make-sparse-keymap)))
+			      buttons))
+	  (mapcar (lambda (button)
+		    `(progn
+		       (define-key ,(car button) (kbd "<down-mouse-1>") ,(cadr button))
+		       (define-key ,(car button) (kbd "<down-mouse-2>") ,(cadr button))
+		       (define-key ,(car button) (kbd "<return>") ,(cadr button))))
+		  buttons)
+	  body))
+
+(defun elgrep-menu (&optional reset)
   "Present a menu with most of the parameters for `elgrep'.
 You can adjust the parameters there and start `elgrep'."
   (declare (special w-dir w-file-name-re w-re w-recursive w-start))
   (interactive)
-  (switch-to-buffer "*elgrep-menu*")
-  (kill-all-local-variables)
-  (let ((inhibit-read-only t))
-    (erase-buffer))
-  (remove-overlays)
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "<down-mouse-1>") #'elgrep-menu-elgrep)
-    (define-key map (kbd "<return>") #'elgrep-menu-elgrep)
-    (buffer-disable-undo)
-    (let ((caption "Elgrep Menu"))
-      (widget-insert (concat caption "\n" (make-string (length caption) ?=) "\n\n")))
-    (setq-local w-dir (widget-create 'editable-field :format "Directory: %v" default-directory))
-    (setq-local w-file-name-re (widget-create 'editable-field :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
-    (setq-local w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
-    (widget-insert  "Recurse into subdirectories ")
-    (setq-local w-recursive (widget-create 'checkbox nil))
-    (widget-insert "\n")
-    (setq-local w-start (widget-create 'push-button (propertize "Start elgrep" 'keymap map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Start elgrep with the specified parameters"))))
-  (use-local-map widget-keymap)
-  (widget-setup))
+  (if (and (buffer-live-p (get-buffer "*elgrep-menu*"))
+	   (null reset))
+      (switch-to-buffer "*elgrep-menu*")
+    (switch-to-buffer "*elgrep-menu*")
+    (kill-all-local-variables)
+    (let ((inhibit-read-only t))
+      (erase-buffer))
+    (remove-overlays)
+    (elgrep-menu-with-buttons ((elgrep-menu-start-map #'elgrep-menu-elgrep)
+			       (elgrep-menu-bury-map #'bury-buffer)
+			       (elgrep-menu-reset-map (lambda () (interactive) (elgrep-menu t))))
+      (buffer-disable-undo)
+      (let ((caption "Elgrep Menu"))
+	(widget-insert (concat caption "\n" (make-string (length caption) ?=) "\n\n")))
+      (setq-local w-dir (widget-create 'editable-field :format "Directory: %v" default-directory))
+      (setq-local w-file-name-re (widget-create 'editable-field :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
+      (setq-local w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
+      (widget-insert  "Recurse into subdirectories ")
+      (setq-local w-recursive (widget-create 'checkbox nil))
+      (widget-insert "\n")
+      (widget-create 'push-button (propertize "Start elgrep" 'keymap elgrep-menu-start-map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Start elgrep with the specified parameters"))
+      (widget-insert " ")
+      (widget-create 'push-button (propertize "Burry elgrep menu" 'keymap elgrep-menu-bury-map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Bury elgrep-menu."))
+      (widget-insert " ")
+      (widget-create 'push-button (propertize "Reset elgrep menu" 'keymap elgrep-menu-reset-map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Reset elgrep-menu.")))
+    (use-local-map widget-keymap)
+    (local-set-key "q" #'bury-buffer)
+    (widget-setup)))
 
 (defun elgrep (dir file-name-re re &rest options)
   "Grep files via emacs lisp (no dependence on external grep).
@@ -193,7 +223,7 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 	  filematches
 	  (inhibit-read-only t)
 	  (cOp (or (plist-get options :cOp) 'buffer-substring-no-properties)))
-      (loop for file in files do
+      (cl-loop for file in files do
 	    (when (file-regular-p file)
 	      (if re
 		  (progn
@@ -205,7 +235,7 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 		      (goto-char (point-min))
 		      (while (search-forward-regexp re nil 'noErr)
 			(let* ((n (/ (length (match-data)) 2))
-			       (matchdata (loop for i from 0 below n
+			       (matchdata (cl-loop for i from 0 below n
 						collect
 						(list :match (match-string-no-properties i)
 						      :context (funcall cOp
@@ -229,7 +259,7 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 		(setq filematches (cons (list file) filematches)))))
       (setq filematches (nreverse filematches))
       (when (plist-get options :recursive)
-	(setq files (loop for file in (directory-files dir)
+	(setq files (cl-loop for file in (directory-files dir)
 			  if (and (eq (car (file-attributes (concat dir file))) t) (null (string-match "^\\.[.]?$" file)))
 			  collect file))
 	(dolist (file files)
@@ -239,7 +269,7 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 		     (apply 'elgrep (concat dir file) file-name-re re options)
 		   (let ((files (apply 'elgrep (concat dir file) file-name-re re options)))
 		     ;;(debug)
-		     (loop for f on files do
+		     (cl-loop for f on files do
 			   (setcar f (cons (concat file "/" (caar f)) (cdar f))))
 		     files))
 		 filematches))))
@@ -263,6 +293,8 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 	  (bury-buffer)
 	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))
       filematches)))
+
+(easy-menu-add-item global-map '("menu-bar" "tools") ["Search Files (Elgrep)..." elgrep-menu t] "grep")
 
 (provide 'elgrep)
 ;;; elgrep.el ends here
