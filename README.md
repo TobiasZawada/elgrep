@@ -1,3 +1,8 @@
+Emacs-Lisp Grep (`elgrep`)
+====
+Package for searching text matching a given regular expression in files with names matching another regular expression within a user-specified directory.
+The directory can optionally be searched recursively.
+
 Open the `elgrep-menu` via menu item "Tools" → "Search files (Elgrep)...".
 There are menu items for the directory, the file name regexp for filtering
 and the regexp for grepping. Furthermore, you can also switch on recursive grep.
