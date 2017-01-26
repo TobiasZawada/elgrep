@@ -2,7 +2,8 @@ Emacs-Lisp Grep (`elgrep`)
 ====
 Short description
 ----
-Package for searching text matching a given regular expression in files with names matching another regular expression within a user-specified directory.
+Emacs lisp package for searching text matching a given regular expression in a set of files within a user-specified directory.
+The files are selected by another regular expression matching the file names.
 The directory can optionally be searched recursively.
 PDF-files can also be searched but for that purpose the external tool `pdftotext` (or some equivalent program) is required.
 
