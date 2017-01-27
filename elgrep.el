@@ -74,7 +74,7 @@ If num-or-re is a regular expression search for that RE and return line-end-posi
 	   (,search-op ,num-or-re nil 'noErr)
 	   (,pos-op)
 	   ))
-     (,pos-op (1+ ,num-or-re))))
+     (,pos-op (and ,num-or-re (1+ ,num-or-re)))))
 
 (defun classify (classifier list &rest key-values)
   "Maps the LIST entries through CLASSIFIER to class denotators.
