@@ -1,8 +1,8 @@
-;;; elgrep.el --- Searching files for regular expressions; (emacs-lisp implementation)
+;;; elgrep.el --- Searching files for regular expressions; (emacs-lisp implementation) -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2015  Tobias Zawada
 
-;; Author: Tobias Zawada <i@tn-home.de>
+;; Author: Tobias Zawada <naehring@smtp.1und1.de>
 ;; Keywords: tools, matching, files, unix
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -165,6 +165,38 @@ You can adjust the parameters there and start `elgrep'."
     (local-set-key "q" #'bury-buffer)
     (widget-setup)))
 
+(defun elgrep-get-formatter ()
+   "Returns a formatter for elgrep-lines.
+The formatter is a function with two arguments FNAME and PART.
+FNAME is the file name where the match occurs. PART is a property list with members
+:match (the actual match)
+:context (the match including context lines)
+:line (the line in the source code file)
+:line-beg (the beginning position of the context in the source code file)
+:beg (the beginning position of the match)
+:end (the end position of the match)
+The formatter is actually a capture that remembers the last file name and the line number
+such that the same line number is not output multiple times."
+   (let ((last-file "")
+	 (last-line 0)
+	 (output-beg 0))
+     (lambda (fname part)
+       (let ((line (plist-get part :line)))
+	 (unless (and (string-equal last-file fname)
+		      (= last-line line))
+	   (insert (format "%s:%d:" fname line))
+	   (setq output-beg (point))
+	   (insert (plist-get part :context) ?\n))
+	 (let ((context-beg (plist-get part :context-beg))
+	       (match-beg (plist-get part :beg))
+	       (match-end (plist-get part :end)))
+	   (put-text-property (+ (- match-beg context-beg) output-beg)
+			      (+ (- match-end context-beg) output-beg)
+			      'font-lock-face 'match))
+	 (setq last-file fname
+	       last-line line)
+	 ))))
+
 (defun elgrep (dir file-name-re re &rest options)
   "Grep files via emacs lisp (no dependence on external grep).
 Return list of filematches.
@@ -173,7 +205,7 @@ Each filematch is a cons (file . matchdata).
 file is the file name.
 matchdata is a list of matches.
 Each match is a list of sub-matches.
-Each submatch is a plist of :match, :context, :line, :beg and :end.
+Each submatch is a plist of :match, :context, :line, :linestart, :beg and :end.
 
 options is a plist
 Flags:
@@ -219,7 +251,8 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
     (buffer-disable-undo)
     (setq default-directory dir)
     (let ((files (directory-files dir (plist-get options :abs) file-name-re))
-	  (formatter (or (plist-get options :formatter) (lambda (fname part) (format "%s:%d:%s\n" fname (plist-get part :line) (plist-get part :context)))))
+	  (formatter (or (plist-get options :formatter)
+			 (elgrep-get-formatter)))
 	  filematches
 	  (inhibit-read-only t)
 	  (cOp (or (plist-get options :cOp) 'buffer-substring-no-properties)))
@@ -236,22 +269,23 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 		      (while (search-forward-regexp re nil 'noErr)
 			(let* ((n (/ (length (match-data)) 2))
 			       (matchdata (cl-loop for i from 0 below n
-						collect
-						(list :match (match-string-no-properties i)
-						      :context (funcall cOp
-									(elgrep-line-position (plist-get options :cBeg) line-beginning-position re-search-backward)
-									(elgrep-line-position (plist-get options :cEnd) line-end-position re-search-forward))
-						      :line (prog1
-								(setq last-line-number
-								      (+ last-line-number -1
-									 (save-excursion
-									   (save-restriction
-									     (narrow-to-region last-pos (point))
-									     (goto-char (point-min))
-									     (- (buffer-size) (forward-line (buffer-size)))))))
-							      (setq last-pos (point)))
-						      :beg (match-beginning i)
-						      :end (match-end i)))))
+						   collect
+						   (let ((context-beginning (elgrep-line-position (plist-get options :cBeg) line-beginning-position re-search-backward))
+							 (context-end (elgrep-line-position (plist-get options :cEnd) line-end-position re-search-forward)))
+						     (list :match (match-string-no-properties i)
+							   :context (funcall cOp context-beginning context-end)
+							   :line (prog1
+								     (setq last-line-number
+									   (+ last-line-number -1
+									      (save-excursion
+										(save-restriction
+										  (narrow-to-region last-pos (point))
+										  (goto-char (point-min))
+										  (- (buffer-size) (forward-line (buffer-size)))))))
+								   (setq last-pos (point)))
+							   :context-beg context-beginning
+							   :beg (match-beginning i)
+							   :end (match-end i))))))
 			  (setq filematch (cons matchdata filematch))))
 		      (when filematch
 			(setq filematches (cons (cons file (nreverse filematch)) filematches)))))
@@ -285,7 +319,7 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 		      (let ((fname (car filematch)))
 			(dolist (match (cdr filematch))
 			  (dolist (part match)
-			    (insert (funcall formatter fname part))
+			    (funcall formatter fname part)
 			    ))))
 		    (grep-mode))
 		(elgrep-dired-files (mapcar 'car filematches)))
