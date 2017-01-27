@@ -66,7 +66,7 @@
   (dired-build-subdir-alist))
 
 (defmacro elgrep-line-position (num-or-re pos-op search-op)
-  "If NUM-OR-RE is a number then act like `line-end-position' or like `line-beginning-position' if end is non-nil.
+  "If NUM-OR-RE is a number then act like (POS-OP (1+ NUM-OR-RE)) with POS-OP being `line-end-position' or `line-beginning-position'.
 If num-or-re is a regular expression search for that RE and return line-end-position or line-beginning-position of the line with the match, respectively."
   `(if (stringp ,num-or-re)
        (save-excursion
@@ -74,7 +74,7 @@ If num-or-re is a regular expression search for that RE and return line-end-posi
 	   (,search-op ,num-or-re nil 'noErr)
 	   (,pos-op)
 	   ))
-     (,pos-op ,num-or-re)))
+     (,pos-op (1+ ,num-or-re))))
 
 (defun classify (classifier list &rest key-values)
   "Maps the LIST entries through CLASSIFIER to class denotators.
@@ -105,13 +105,18 @@ Keywords supported: :test"
 (defun elgrep-menu-elgrep (&optional event)
   "Start `elgrep' with the start-button from `elgrep-menu'."
   (interactive)
-  (declare (special w-dir w-file-name-re w-re w-recursive w-start))
+  (declare (special w-dir w-file-name-re w-re w-recursive w-start w-cBeg w-cEnd w-exclude-file-re w-dir-re w-exclude-dir-re))
   (let ((pos (event-start event)))
     (with-current-buffer (window-buffer (posn-window pos))
       (elgrep (widget-value w-dir)
 	      (widget-value w-file-name-re)
 	      (widget-value w-re)
 	      :recursive (widget-value w-recursive)
+	      :cBeg (- (widget-value w-cBeg))
+	      :cEnd (widget-value w-cEnd)
+	      :exclude-file-re (widget-value w-exclude-file-re)
+	      :dir-re (widget-value w-dir-re)
+	      :exclude-dir-re (widget-value w-exclude-dir-re)
 	      :interactive t))))
 
 (defmacro elgrep-menu-with-buttons (buttons &rest body)
@@ -134,7 +139,7 @@ See definition of `elgrep-menu' for an example."
 (defun elgrep-menu (&optional reset)
   "Present a menu with most of the parameters for `elgrep'.
 You can adjust the parameters there and start `elgrep'."
-  (declare (special w-dir w-file-name-re w-re w-recursive w-start))
+  (declare (special w-dir w-file-name-re w-re w-recursive w-start w-cBeg w-cEnd w-exclude-file-re w-dir-re w-exclude-dir-re))
   (interactive)
   (if (and (buffer-live-p (get-buffer "*elgrep-menu*"))
 	   (null reset))
@@ -150,11 +155,16 @@ You can adjust the parameters there and start `elgrep'."
       (buffer-disable-undo)
       (let ((caption "Elgrep Menu"))
 	(widget-insert (concat caption "\n" (make-string (length caption) ?=) "\n\n")))
+      (setq-local w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
       (setq-local w-dir (widget-create 'editable-field :format "Directory: %v" default-directory))
       (setq-local w-file-name-re (widget-create 'editable-field :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
-      (setq-local w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
+      (setq-local w-exclude-file-re (widget-create 'editable-field :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
+      (setq-local w-dir-re (widget-create 'editable-field :format "Directory Name Regular Expression: %v" ""))
+      (setq-local w-exclude-dir-re (widget-create 'editable-field :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
       (widget-insert  "Recurse into subdirectories ")
       (setq-local w-recursive (widget-create 'checkbox nil))
+      (setq-local w-cBeg (widget-create 'number :format "\nContext Lines Before The Match: %v" 0))
+      (setq-local w-cEnd (widget-create 'number :format "Context Lines After The Match: %v" 0))
       (widget-insert "\n")
       (widget-create 'push-button (propertize "Start elgrep" 'keymap elgrep-menu-start-map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Start elgrep with the specified parameters"))
       (widget-insert " ")
@@ -187,12 +197,12 @@ such that the same line number is not output multiple times."
 	   (insert (format "%s:%d:" fname line))
 	   (setq output-beg (point))
 	   (insert (plist-get part :context) ?\n))
-	 (let ((context-beg (plist-get part :context-beg))
-	       (match-beg (plist-get part :beg))
-	       (match-end (plist-get part :end)))
-	   (put-text-property (+ (- match-beg context-beg) output-beg)
-			      (+ (- match-end context-beg) output-beg)
-			      'font-lock-face 'match))
+	 (let* ((context-beg (plist-get part :context-beg))
+		(match-beg (+ (- (plist-get part :beg) context-beg) output-beg))
+		(match-end (+ (- (plist-get part :end) context-beg) output-beg)))
+	   (when (and (>= match-beg output-beg)
+		      (<= match-end (point-max)))
+	     (put-text-property match-beg match-end 'font-lock-face 'match)))
 	 (setq last-file fname
 	       last-line line)
 	 ))))
@@ -233,7 +243,19 @@ t: also grep recursively subdirectories in dir (also if called interactively wit
 
 :formatter
 Formatting function to call for each match if called interactively with non-nil RE.
-Inputs: format string \"%s:%d:%s\n\", file-name, line number, 
+Inputs: format string \"%s:%d:%s\n\", file-name, line number,
+
+:exclude-file-re
+Regular expression matching the files that should not be grepped.
+
+:dir-re
+Regular expression matching the directories that should be entered in recursive grep.
+Defaults to \"\".
+
+:exclude-dir-re
+Regular expression matching the directories that should not be entered in recursive grep.
+If this is the empty string no directories are excluded.
+Defaults to \"^\\.\".
 "
   (interactive (let ((dir (read-directory-name "Directory:")))
 		 (append (list dir
@@ -255,7 +277,10 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 			 (elgrep-get-formatter)))
 	  filematches
 	  (inhibit-read-only t)
-	  (cOp (or (plist-get options :cOp) 'buffer-substring-no-properties)))
+	  (cOp (or (plist-get options :cOp) 'buffer-substring-no-properties))
+	  (exclude-file-re (plist-get options :exclude-file-re)))
+      (when (and exclude-file-re (null (string-equal exclude-file-re "")))
+	(setq files (cl-remove-if (lambda (fname) (string-match exclude-file-re fname)) files)))
       (cl-loop for file in files do
 	    (when (file-regular-p file)
 	      (if re
@@ -294,8 +319,17 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
       (setq filematches (nreverse filematches))
       (when (plist-get options :recursive)
 	(setq files (cl-loop for file in (directory-files dir)
-			  if (and (eq (car (file-attributes (concat dir file))) t) (null (string-match "^\\.[.]?$" file)))
-			  collect file))
+			     if (and (file-directory-p (concat dir file))
+				     (let ((dir-re (plist-get options :dir-re))
+					   (exclude-dir-re (plist-get options :exclude-dir-re)))
+				       (and (or (null dir-re)
+						(string-match dir-re file))
+					    (null
+					     (and exclude-dir-re
+						  (null (string-equal exclude-dir-re ""))
+						  (string-match exclude-dir-re file)))))
+				     (null (string-match "^\\.[.]?$" file)))
+			     collect file))
 	(dolist (file files)
 	  (setq filematches
 		(append
@@ -324,7 +358,7 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 		    (grep-mode))
 		(elgrep-dired-files (mapcar 'car filematches)))
 	      (display-buffer (current-buffer)))
-	  (bury-buffer)
+	  (kill-buffer)
 	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))
       filematches)))
 
