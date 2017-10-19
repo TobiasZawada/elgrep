@@ -256,6 +256,9 @@ Defaults to \"\".
 Regular expression matching the directories that should not be entered in recursive grep.
 If this is the empty string no directories are excluded.
 Defaults to \"^\\.\".
+
+:keep-elgrep-buffer
+Keep buffer <*elgrep*> even when there are no matches.
 "
   (interactive (let ((dir (read-directory-name "Directory:")))
 		 (append (list dir
@@ -268,7 +271,7 @@ Defaults to \"^\\.\".
     (setq re nil))
   (unless dir
     (setq dir default-directory))
-  (setq dir (concat (directory-file-name (substitute-in-file-name dir)) "/"))
+  (setq dir (expand-file-name (directory-file-name (substitute-in-file-name dir))))
   (with-current-buffer (get-buffer-create "*elgrep*")
     (buffer-disable-undo)
     (setq default-directory dir)
@@ -286,7 +289,7 @@ Defaults to \"^\\.\".
 	      (if re
 		  (progn
 		    (erase-buffer)
-		    (elgrep-insert-file-contents (if (plist-get options :abs) file (concat dir file)))
+		    (elgrep-insert-file-contents (if (plist-get options :abs) file (expand-file-name file dir)))
 		    (let (filematch
 			  (last-line-number 1)
 			  (last-pos (point-min)))
@@ -319,7 +322,7 @@ Defaults to \"^\\.\".
       (setq filematches (nreverse filematches))
       (when (plist-get options :recursive)
 	(setq files (cl-loop for file in (directory-files dir)
-			     if (and (file-directory-p (concat dir file))
+			     if (and (file-directory-p (expand-file-name file dir))
 				     (let ((dir-re (plist-get options :dir-re))
 					   (exclude-dir-re (plist-get options :exclude-dir-re)))
 				       (and (or (null dir-re)
@@ -334,14 +337,15 @@ Defaults to \"^\\.\".
 	  (setq filematches
 		(append
 		 (if (plist-get options :abs)
-		     (apply 'elgrep (concat dir file) file-name-re re options)
-		   (let ((files (apply 'elgrep (concat dir file) file-name-re re options)))
+		     (apply 'elgrep (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t options)
+		   (let ((files (apply 'elgrep (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t options)))
 		     ;;(debug)
 		     (cl-loop for f on files do
-			   (setcar f (cons (concat file "/" (caar f)) (cdar f))))
+			   (setcar f (cons (file-relative-name (expand-file-name (caar f) file)) (cdar f))))
 		     files))
 		 filematches))))
       (when (or (plist-get options :interactive) (called-interactively-p 'any))
+	(cl-assert (string-equal (buffer-name) "*elgrep*") nil "Expected buffer <*elgrep*> got %s." (current-buffer))
 	(if filematches
 	    (progn
 	      (unless (plist-get options :abs)
@@ -358,7 +362,8 @@ Defaults to \"^\\.\".
 		    (grep-mode))
 		(elgrep-dired-files (mapcar 'car filematches)))
 	      (display-buffer (current-buffer)))
-	  (kill-buffer)
+	  (unless (plist-get options :keep-elgrep-buffer)
+	    (kill-buffer))
 	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))
       filematches)))
 
