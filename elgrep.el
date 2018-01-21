@@ -455,6 +455,7 @@ Keep buffer <*elgrep*> even when there are no matches."
 	       (name (caar file-struct))
 	       (dir (cadar file-struct))
 	       (path (if dir (expand-file-name name (file-name-directory dir)) name)))
+	  (setq last-pos (point))
 	  (with-current-buffer (find-file path)
 	    (goto-char context-begin)
 	    (let* ((original-str (buffer-substring-no-properties  context-begin context-end)))
