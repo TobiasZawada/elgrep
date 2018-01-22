@@ -1,9 +1,12 @@
-;;; elgrep.el --- Searching files for regular expressions; (emacs-lisp implementation) -*- lexical-binding: t; -*-
+;;; elgrep.el --- Searching files for regular expressions -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2015  Tobias Zawada
 
 ;; Author: Tobias Zawada <naehring@smtp.1und1.de>
 ;; Keywords: tools, matching, files, unix
+;; Version: 1
+;; URL: https://github.com/TobiasZawada/elgrep
+;; Package-Requires: ((emacs "25.1.50"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -82,7 +85,7 @@ of the line with the match, respectively."
 	   ))
      (,pos-op (and ,num-or-re (1+ ,num-or-re)))))
 
-(defun classify (classifier list &rest options)
+(defun elgrep-classify (classifier list &rest options)
   "Use CLASSIFIER to map the LIST entries to class denotators.
 Returns the list of equivalence classes.  Each equivalence class
 is a cons whose `car' is the class denotator and the cdr is the
@@ -105,7 +108,7 @@ Keywords supported: :test"
   (unless dir (setq dir default-directory))
   (let* ((filelist (cl-delete-if (lambda (file) (string-match "\\.\\(~\\|bak\\)$" file))
 				 (directory-files dir)))
-	 (ext (car-safe (cl-reduce (lambda (x y) (if (> (length x) (length y)) x y)) (classify 'file-name-extension filelist))));; most often used extension
+	 (ext (car-safe (cl-reduce (lambda (x y) (if (> (length x) (length y)) x y)) (elgrep-classify 'file-name-extension filelist))));; most often used extension
 	 )
     (concat "\\." ext "$")))
 
@@ -464,7 +467,7 @@ Keep buffer <*elgrep*> even when there are no matches."
 		(kill-region context-begin context-end)
 		(insert edited-str)))))))))
 
-(defun make-inverse-map (map1 map2)
+(defun elgrep-make-inverse-map (map1 map2)
   "Construct a new sparse keymap from keymaps MAP1 and MAP2.
 The numeric keys from MAP1 are looked up from MAP2.
 E.g., `(make-inverse-map special-mode-map global-map)'
@@ -479,12 +482,12 @@ deactivates the special keys from `special-mode-map'."
 
 (defvar special-mode-map) ;; from simple.el
 
-(defvar elgrep-edit-mode-map (let ((map (make-inverse-map special-mode-map global-map)))
+(defvar elgrep-edit-mode-map (let ((map (elgrep-make-inverse-map special-mode-map global-map)))
                                (define-key map (kbd "C-x C-s") #'elgrep-save)
 			       (define-key map "n" #'self-insert-command)
                                (define-key map [menu-bar grep] '(menu-item "Save Changes" elgrep-save))
                                map)
-  "Keymap used in `elgrep-edit-mode'.
+  "Keymap used in function `elgrep-edit-mode'.
 Ovwerrides `compilation-mode-map'.")
 (defvar-local elgrep-saved-major-mode nil)
 
