@@ -6,7 +6,7 @@
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1
 ;; URL: https://github.com/TobiasZawada/elgrep
-;; Package-Requires: ((emacs "25.1.50"))
+;; Package-Requires: ((emacs "25.1"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -51,7 +51,7 @@
   "Like `insert-file-contents' for FILENAME.
 It uses `pdftotext' (poppler) for pdf-files (with file extension pdf).
 VISIT is passed as second argument to `insert-file-contents'."
-  (if (string-match (downcase filename) "\.pdf$")
+  (if (string-match (downcase filename) "\.pdf\\'")
       (call-process "pdftotext" filename (current-buffer) visit "-" "-")
     (insert-file-contents filename visit)))
 
@@ -80,7 +80,7 @@ of the line with the match, respectively."
   `(if (stringp ,num-or-re)
        (save-excursion
 	 (save-match-data
-	   (,search-op ,num-or-re nil 'noErr)
+	   (,search-op ,num-or-re nil t) ;; t=noerror
 	   (,pos-op)
 	   ))
      (,pos-op (and ,num-or-re (1+ ,num-or-re)))))
@@ -106,38 +106,37 @@ Keywords supported: :test"
 (defun elgrep-default-filename-regexp (&optional dir)
   "Create default filename regexp from the statistical analysis of files in DIR which defaults to `default-directory'."
   (unless dir (setq dir default-directory))
-  (let* ((filelist (cl-delete-if (lambda (file) (string-match "\\.\\(~\\|bak\\)$" file))
+  (let* ((filelist (cl-delete-if (lambda (file) (string-match "\\.\\(~\\|bak\\)\\'" file))
 				 (directory-files dir)))
 	 (ext (car-safe (cl-reduce (lambda (x y) (if (> (length x) (length y)) x y)) (elgrep-classify 'file-name-extension filelist))));; most often used extension
 	 )
-    (concat "\\." ext "$")))
+    (concat "\\." ext "\\'")))
 
-(defvar w-dir)
-(defvar w-file-name-re)
-(defvar w-re)
-(defvar w-recursive)
-(defvar w-start)
-(defvar w-cBeg)
-(defvar w-cEnd)
-(defvar w-exclude-file-re)
-(defvar w-dir-re)
-(defvar w-exclude-dir-re)
-(defvar w-search-fun)
+(defvar elgrep-w-dir)
+(defvar elgrep-w-file-name-re)
+(defvar elgrep-w-re)
+(defvar elgrep-w-recursive)
+(defvar elgrep-w-c-beg)
+(defvar elgrep-w-c-end)
+(defvar elgrep-w-exclude-file-re)
+(defvar elgrep-w-dir-re)
+(defvar elgrep-w-exclude-dir-re)
+(defvar elgrep-w-search-fun)
 
 (defun elgrep-menu-elgrep ()
   "Start `elgrep' with the start-button from `elgrep-menu'."
   (interactive "@")
-  (elgrep (widget-value w-dir)
-          (widget-value w-file-name-re)
-          (widget-value w-re)
-          :recursive (widget-value w-recursive)
-          :cBeg (- (widget-value w-cBeg))
-          :cEnd (widget-value w-cEnd)
-          :exclude-file-re (widget-value w-exclude-file-re)
-          :dir-re (widget-value w-dir-re)
-          :exclude-dir-re (widget-value w-exclude-dir-re)
+  (elgrep (widget-value elgrep-w-dir)
+          (widget-value elgrep-w-file-name-re)
+          (widget-value elgrep-w-re)
+          :recursive (widget-value elgrep-w-recursive)
+          :c-beg (- (widget-value elgrep-w-c-beg))
+          :c-end (widget-value elgrep-w-c-end)
+          :exclude-file-re (widget-value elgrep-w-exclude-file-re)
+          :dir-re (widget-value elgrep-w-dir-re)
+          :exclude-dir-re (widget-value elgrep-w-exclude-dir-re)
           :interactive t
-          :search-fun (widget-value w-search-fun)))
+          :search-fun (widget-value elgrep-w-search-fun)))
 
 (defmacro elgrep-menu-with-buttons (buttons &rest body)
   "Define BUTTONS and execute BODY with keymaps for widgets.
@@ -175,17 +174,17 @@ You can adjust the parameters there and start `elgrep'."
       (buffer-disable-undo)
       (let ((caption "Elgrep Menu"))
 	(widget-insert (concat caption "\n" (make-string (length caption) ?=) "\n\n")))
-      (setq-local w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
-      (setq-local w-dir (widget-create 'directory :format "Directory: %v" default-directory))
-      (setq-local w-file-name-re (widget-create 'regexp :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
-      (setq-local w-exclude-file-re (widget-create 'regexp :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
-      (setq-local w-dir-re (widget-create 'regexp :format "Directory Name Regular Expression: %v" ""))
-      (setq-local w-exclude-dir-re (widget-create 'regexp :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
+      (setq-local elgrep-w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
+      (setq-local elgrep-w-dir (widget-create 'directory :format "Directory: %v" default-directory))
+      (setq-local elgrep-w-file-name-re (widget-create 'regexp :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
+      (setq-local elgrep-w-exclude-file-re (widget-create 'regexp :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
+      (setq-local elgrep-w-dir-re (widget-create 'regexp :format "Directory Name Regular Expression: %v" ""))
+      (setq-local elgrep-w-exclude-dir-re (widget-create 'regexp :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
       (widget-insert  "Recurse into subdirectories ")
-      (setq-local w-recursive (widget-create 'checkbox nil))
-      (setq-local w-cBeg (widget-create 'number :format "\nContext Lines Before The Match: %v" 0))
-      (setq-local w-cEnd (widget-create 'number :format "Context Lines After The Match: %v" 0))
-      (setq-local w-search-fun (widget-create 'function :format "Search function: %v " #'re-search-forward))
+      (setq-local elgrep-w-recursive (widget-create 'checkbox nil))
+      (setq-local elgrep-w-c-beg (widget-create 'number :format "\nContext Lines Before The Match: %v" 0))
+      (setq-local elgrep-w-c-end (widget-create 'number :format "Context Lines After The Match: %v" 0))
+      (setq-local elgrep-w-search-fun (widget-create 'function :format "Search function: %v " #'re-search-forward))
       (widget-insert "\n")
       (widget-create 'push-button (propertize "Start elgrep" 'keymap elgrep-menu-start-map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Start elgrep with the specified parameters"))
       (widget-insert " ")
@@ -292,17 +291,17 @@ of the last visited buffer
 :interactive
 t: call as interactive
 
-:cBeg context begin (line beginning)
+:c-beg context begin (line beginning)
 Lines before match defaults to 0. Can also be a regular expression.
 Then this re is searched for in backward-direction
 starting at the current elgrep-match.
 
-:cEnd context end (line end)
+:c-end context end (line end)
 Lines behind match defaults to 0
 Then this re is searched for in forward-direction
 starting at the current elgrep-match.
 
-:cOp
+:c-op
 Context operation gets beginning and end position of context as arguments.
 Defaults to `buffer-substring-no-properties'.
 
@@ -356,7 +355,7 @@ Keep buffer <*elgrep*> even when there are no matches."
     (let ((files (directory-files dir (plist-get options :abs) file-name-re))
 	  filematches
 	  (inhibit-read-only t)
-	  (cOp (or (plist-get options :cOp) 'buffer-substring-no-properties))
+	  (c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
 	  (exclude-file-re (plist-get options :exclude-file-re))
           (search-fun (or (plist-get options :search-fun) #'re-search-forward)))
       (when (and exclude-file-re (null (string-equal exclude-file-re "")))
@@ -371,16 +370,16 @@ Keep buffer <*elgrep*> even when there are no matches."
 			  (last-line-number 1)
 			  (last-pos (point-min)))
 		      (goto-char (point-min))
-		      (while (funcall search-fun re nil 'noErr)
+		      (while (funcall search-fun re nil t)
 			(let* ((n (/ (length (match-data)) 2))
 			       (matchdata (cl-loop for i from 0 below n
 						   collect
 						   (let ((context-beginning (save-excursion
 									      (goto-char (match-beginning 0))
-									      (elgrep-line-position (plist-get options :cBeg) line-beginning-position re-search-backward)))
-							 (context-end (elgrep-line-position (plist-get options :cEnd) line-end-position re-search-forward)))
+									      (elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
+							 (context-end (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
 						     (list :match (match-string-no-properties i)
-							   :context (funcall cOp context-beginning context-end)
+							   :context (funcall c-op context-beginning context-end)
 							   :line (prog1
 								     (setq last-line-number
 									   (+ last-line-number
@@ -407,7 +406,7 @@ Keep buffer <*elgrep*> even when there are no matches."
 					     (and exclude-dir-re
 						  (null (string-equal exclude-dir-re ""))
 						  (string-match exclude-dir-re file)))))
-				     (null (string-match "^\\.[.]?$" file)))
+				     (null (string-match "^\\.[.]?\\'" file)))
 			     collect file))
 	(dolist (file files)
 	  (setq filematches
@@ -416,8 +415,8 @@ Keep buffer <*elgrep*> even when there are no matches."
 		     (apply 'elgrep (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t options)
 		   (let ((files (apply 'elgrep (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t options)))
 		     ;;(debug)
-		     (cl-loop for f on files do
-			   (setcar f (cons (file-relative-name (expand-file-name (caar f) file)) (cdar f))))
+		     (cl-loop for f in files do
+			      (setcar f (file-relative-name (expand-file-name (car f) file))))
 		     files))
 		 filematches))))
       (when (or (plist-get options :interactive) (called-interactively-p 'any))
@@ -483,7 +482,7 @@ deactivates the special keys from `special-mode-map'."
 (defvar special-mode-map) ;; from simple.el
 
 (defvar elgrep-edit-mode-map (let ((map (elgrep-make-inverse-map special-mode-map global-map)))
-                               (define-key map (kbd "C-x C-s") #'elgrep-save)
+                               (define-key map [remap save-buffer] #'elgrep-save)
 			       (define-key map "n" #'self-insert-command)
                                (define-key map [menu-bar grep] '(menu-item "Save Changes" elgrep-save))
                                map)
