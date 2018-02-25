@@ -41,6 +41,23 @@
 
 (require 'cl-lib)
 (require 'easymenu)
+(require 'grep) ; also provides "compile"
+
+;; For safity reasons `elgrep-edit' exploits the text properties
+;; `elgrep-context', `elgrep-context-begin', `elgrep-context-end'
+;; This implies that `elgrep-edit' does not work anymore with
+;; `grep-mode' allone.
+;; Therefore, we introduce a new mode for listing the elgrep matches:
+(define-derived-mode elgrep-mode grep-mode "elgrep"
+  "Major mode for elgrep buffers.
+See `elgrep' and `elgrep-menu' for details."
+  (setq header-line-format (substitute-command-keys "Quit (burry-buffer): \\[quit-window]; go to occurence: \\[compile-goto-error]; elgrep-edit-mode: \\[elgrep-edit-mode]")))
+
+(define-key elgrep-mode-map (kbd "C-c C-e") #'elgrep-edit-mode)
+(easy-menu-define nil elgrep-mode-map
+  "Menu for `elgrep-mode'."
+  '("Elgrep"
+    ["Elgrep-edit" elgrep-edit-mode t]))
 
 (defvar elgrep-file-name-re-hist nil
   "History of file-name regular expressions for `elgrep' (which see).")
@@ -245,12 +262,17 @@ such that the same line number is not output multiple times."
 		 last-line line)
 	   )))))
 
+(defvar compilation-last-buffer) ; defined in "compile.el"
+
 (defun elgrep-list-matches (filematches &rest options)
   "Insert FILEMATCHES as returned by `elgrep' in current buffer.
 OPTIONS is a plist of options as for `elgrep'."
   (let ((opt-list (car-safe options)))
     (when (listp opt-list)
       (setq options opt-list)))
+  (setq compilation-last-buffer (current-buffer))
+  (unless (plist-get options :no-header)
+    (insert (format "-*- mode: elgrep; default-directory: %S -*-\n" default-directory)))
   (let ((formatter (or (plist-get options :formatter)
 		       (elgrep-get-formatter))))
     (dolist (filematch filematches)
@@ -336,7 +358,10 @@ t just must be be understood by :search-fun.
 Defaults to `re-search-forward'.
 
 :keep-elgrep-buffer
-Keep buffer <*elgrep*> even when there are no matches."
+Keep buffer <*elgrep*> even when there are no matches.
+
+:no-header
+Avoid descriptive header into <*elgrep*> buffer."
   (interactive (let ((dir (read-directory-name "Directory:")))
 		 (append (list dir
 			       (let ((default-file-name-regexp (elgrep-default-filename-regexp dir)))
@@ -429,7 +454,7 @@ Keep buffer <*elgrep*> even when there are no matches."
 	      (if re
 		  (progn
 		    (elgrep-list-matches filematches options)
-		    (grep-mode))
+		    (elgrep-mode))
 		(elgrep-dired-files (mapcar 'car filematches)))
 	      (display-buffer (current-buffer)))
 	  (unless (plist-get options :keep-elgrep-buffer)
@@ -439,14 +464,30 @@ Keep buffer <*elgrep*> even when there are no matches."
 
 (easy-menu-add-item global-map '("menu-bar" "tools") ["Search Files (Elgrep)..." elgrep-menu t] "grep")
 
-(defun elgrep-save ()
-  "Save modifications in the current compilation buffer."
-  (interactive)
+(defun elgrep-first-error-no-select (&optional n)
+  "Restart at first error.
+Visit corresponding source code.
+With prefix arg N, visit the source code of the Nth error."
+  (interactive "p")
+  (let ((next-error-highlight next-error-highlight-no-select))
+    (next-error n t))
+  (pop-to-buffer next-error-last-buffer))
+
+(defun elgrep-save (really-save)
+  "Apply modifications in the current elgrep buffer to the client buffers.
+Save modified client buffers if REALLY-SAVE is non-nil.
+Interactively, REALLY-SAVE is set to the prefix arg."
+  (interactive "p")
   (save-excursion
     (goto-char (point-max))
-    (let ((last-pos (point)))
-      (while (null (bobp))
-	(compilation-next-error -1) ;; barfs if the buffer does not contain any message at all
+    (let ((last-pos (point))
+	  files-to-save)
+      (while (and
+	      (null (bobp))
+	      (condition-case nil
+		  (progn (compilation-next-error -1) ;; barfs if the buffer does not contain any message at all
+			 t)
+		(error nil)))
 	(let* ((edited-str (buffer-substring-no-properties (next-single-property-change (point) 'compilation-message) (1- last-pos)))
 	       (msg (get-text-property (point) 'compilation-message))
 	       (context-begin (get-text-property (point) 'elgrep-context-begin))
@@ -458,33 +499,28 @@ Keep buffer <*elgrep*> even when there are no matches."
 	       (dir (cadar file-struct))
 	       (path (if dir (expand-file-name name (file-name-directory dir)) name)))
 	  (setq last-pos (point))
-	  (with-current-buffer (find-file path)
+	  (with-current-buffer (find-file-noselect path)
 	    (goto-char context-begin)
 	    (let* ((original-str (buffer-substring-no-properties  context-begin context-end)))
 	      (when (and (string-equal context original-str) ;; It is still the old context...
 			 (null (string-equal edited-str original-str))) ;; and this has been changed in *elgrep*.
 		(kill-region context-begin context-end)
-		(insert edited-str)))))))))
+		(insert edited-str)
+		(unless (member path files-to-save)
+		  (push path files-to-save))
+		)))))
+      (when really-save
+	(while files-to-save
+	  (with-current-buffer (get-file-buffer (car files-to-save))
+	    (save-buffer))
+	  (setq files-to-save (cdr files-to-save))))
+      files-to-save)))
 
-(defun elgrep-make-inverse-map (map1 map2)
-  "Construct a new sparse keymap from keymaps MAP1 and MAP2.
-The numeric keys from MAP1 are looked up from MAP2.
-E.g., `(make-inverse-map special-mode-map global-map)'
-deactivates the special keys from `special-mode-map'."
-  (let ((map (make-sparse-keymap)))
-    (cl-loop for key in (cdr map1) do
-             (when (and (consp key)
-                        (numberp (car key)))
-               (let ((v (vector (car key))))
-                 (define-key map v (lookup-key map2 v)))))
-    map))
-
-(defvar special-mode-map) ;; from simple.el
-
-(defvar elgrep-edit-mode-map (let ((map (elgrep-make-inverse-map special-mode-map global-map)))
+(defvar elgrep-edit-mode-map (let ((map (copy-keymap global-map)))
                                (define-key map [remap save-buffer] #'elgrep-save)
-			       (define-key map "n" #'self-insert-command)
-                               (define-key map [menu-bar grep] '(menu-item "Save Changes" elgrep-save))
+			       (define-key map (kbd "C-c C-n") #'next-error-no-select)
+			       (define-key map (kbd "C-c C-p") #'previous-error-no-select)
+			       (define-key map (kbd "C-c C-f") #'elgrep-first-error-no-select)
                                map)
   "Keymap used in function `elgrep-edit-mode'.
 Ovwerrides `compilation-mode-map'.")
@@ -497,23 +533,30 @@ Ovwerrides `compilation-mode-map'.")
 	     when (get-text-property (car interval) refprop)
 	     do (add-text-properties (car interval) (cdr interval) prop-list))))
 
+(defvar-local elgrep-edit-previous-header nil
+  "Elgrep-edit-mode is a minor mode that can be switched on and off.
+When it is switched off it should restore the old header line which is preserved here.")
+
 (define-minor-mode elgrep-edit-mode
   "Mode for editing compilation buffers (especially elgrep buffers)."
   nil
   " e"
-  (cl-assert (derived-mode-p 'compilation-mode) nil "Major mode not derived from compilation mode.")
+  nil
+  (cl-assert (derived-mode-p 'elgrep-mode) nil "Major mode not derived from compilation mode.")
   (if elgrep-edit-mode
       (progn
+	(unless elgrep-edit-previous-header ; Protect against re-entry of function `elgrep-edit-mode' with non-nil `elgrep-edit-mode'.
+	  (setq elgrep-edit-previous-header header-line-format))
+	(setq header-line-format (substitute-command-keys "Exit elgrep-edit-mode: \\[elgrep-edit-mode]; Save modifications: \\[elgrep-save]"))
         (setq buffer-read-only nil)
-        (setq elgrep-saved-major-mode major-mode)
         (define-key (current-local-map) [remap self-insert-command] nil)
         (elgrep-enrich-text-property 'compilation-message '(read-only t intangible t))
         (when (eq buffer-undo-list t)
           (setq buffer-undo-list nil)
           (set-buffer-modified-p nil)))
-    (funcall elgrep-saved-major-mode)
-    (define-key (current-local-map) [remap self-insert-command] 'undefined)
-    (setq elgrep-saved-major-mode nil)))
+    (setq header-line-format elgrep-edit-previous-header
+	  elgrep-edit-previous-header nil)
+    (define-key (current-local-map) [remap self-insert-command] 'undefined)))
 
 (defalias 'elgrep-edit #'elgrep-edit-mode)
 
