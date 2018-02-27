@@ -140,7 +140,7 @@ Keywords supported: :test"
 (defvar elgrep-w-exclude-dir-re)
 (defvar elgrep-w-search-fun)
 
-(defun widget-value-update-hist (wid)
+(defun elgrep-widget-value-update-hist (wid)
   "Get value of widget WID and update its :prompt-history variable."
   (when-let ((ret (widget-value wid))
 	     (hist-var (widget-get wid :prompt-history))
@@ -154,15 +154,15 @@ Keywords supported: :test"
 (defun elgrep-menu-elgrep ()
   "Start `elgrep' with the start-button from `elgrep-menu'."
   (interactive "@")
-  (elgrep (widget-value-update-hist elgrep-w-dir)
-          (widget-value-update-hist elgrep-w-file-name-re)
-          (widget-value-update-hist elgrep-w-re)
+  (elgrep (elgrep-widget-value-update-hist elgrep-w-dir)
+          (elgrep-widget-value-update-hist elgrep-w-file-name-re)
+          (elgrep-widget-value-update-hist elgrep-w-re)
           :recursive (widget-value elgrep-w-recursive)
           :c-beg (- (widget-value elgrep-w-c-beg))
           :c-end (widget-value elgrep-w-c-end)
-          :exclude-file-re (widget-value-update-hist elgrep-w-exclude-file-re)
-          :dir-re (widget-value-update-hist elgrep-w-dir-re)
-          :exclude-dir-re (widget-value-update-hist elgrep-w-exclude-dir-re)
+          :exclude-file-re (elgrep-widget-value-update-hist elgrep-w-exclude-file-re)
+          :dir-re (elgrep-widget-value-update-hist elgrep-w-dir-re)
+          :exclude-dir-re (elgrep-widget-value-update-hist elgrep-w-exclude-dir-re)
           :interactive t
           :search-fun (widget-value elgrep-w-search-fun)))
 
