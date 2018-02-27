@@ -140,12 +140,23 @@ Keywords supported: :test"
 (defvar elgrep-w-exclude-dir-re)
 (defvar elgrep-w-search-fun)
 
+(defun widget-value-update-hist (wid)
+  "Get value of widget WID and update its :prompt-history variable."
+  (when-let ((ret (widget-value wid))
+	     (hist-var (widget-get wid :prompt-history))
+	     (hist-length (or (get hist-var 'history-length) history-length)))
+    (unless (string-equal ret (car-safe (symbol-value hist-var)))
+      (set hist-var (cons ret (symbol-value hist-var)))
+      (when (> (length (symbol-value hist-var)) hist-length)
+	(setf (nthcdr hist-length (symbol-value hist-var)) nil)))
+    ret))
+
 (defun elgrep-menu-elgrep ()
   "Start `elgrep' with the start-button from `elgrep-menu'."
   (interactive "@")
   (elgrep (widget-value elgrep-w-dir)
-          (widget-value elgrep-w-file-name-re)
-          (widget-value elgrep-w-re)
+          (widget-value-update-hist elgrep-w-file-name-re)
+          (widget-value-update-hist elgrep-w-re)
           :recursive (widget-value elgrep-w-recursive)
           :c-beg (- (widget-value elgrep-w-c-beg))
           :c-end (widget-value elgrep-w-c-end)
@@ -172,6 +183,37 @@ See definition of `elgrep-menu' for an example."
 		  buttons)
 	  body))
 
+(defvar-local elgrep-menu-hist-pos nil
+  "Current position in text widget history.
+Used in `elgrep-menu-hist-up' and `elgrep-menu-hist-down'.")
+
+(defun elgrep-menu-hist-move (dir)
+  "Move in :prompt-history of widget at point in direction dir which can be -1 or +1."
+  (when-let ((wid (widget-at))
+	     (histvar (widget-get wid :prompt-history))
+	     (hist (cons (widget-value wid) (symbol-value histvar))))
+    (unless (memq last-command '(elgrep-menu-hist-up elgrep-menu-hist-down))
+      (setq elgrep-menu-hist-pos 0))
+    (setq elgrep-menu-hist-pos (mod (+ elgrep-menu-hist-pos dir) (length hist)))
+    (widget-value-set wid (nth elgrep-menu-hist-pos hist))))
+
+(defun elgrep-menu-hist-up ()
+  "Choose next item in :prompt-history of widget at point."
+  (interactive)
+  (elgrep-menu-hist-move 1))
+
+(defun elgrep-menu-hist-down ()
+  "Choose next item in :prompt-history of widget at point."
+  (interactive)
+  (elgrep-menu-hist-move -1))
+
+(defvar elgrep-menu-hist-map (let ((map (copy-keymap widget-text-keymap)))
+			       (define-key map (kbd "<M-up>") #'elgrep-menu-hist-up)
+			       (define-key map (kbd "<M-down>") #'elgrep-menu-hist-down)
+			       map)
+  "Widget menu used for text widgets with history.
+Binds M-up and M-down to one step in history up and down, respectively.")
+
 (defun elgrep-menu (&optional reset)
   "Present a menu with most of the parameters for `elgrep'.
 Reset the menu entries if RESET is non-nil.
@@ -191,9 +233,15 @@ You can adjust the parameters there and start `elgrep'."
       (buffer-disable-undo)
       (let ((caption "Elgrep Menu"))
 	(widget-insert (concat caption "\n" (make-string (length caption) ?=) "\n\n")))
-      (setq-local elgrep-w-re (widget-create 'editable-field :format "Regular Expression: %v" ""))
+      (setq-local elgrep-w-re (widget-create 'editable-field
+					     :prompt-history 'elgrep-re-hist
+					     :keymap elgrep-menu-hist-map
+					     :format "Regular Expression: %v" ""))
       (setq-local elgrep-w-dir (widget-create 'directory :format "Directory: %v" default-directory))
-      (setq-local elgrep-w-file-name-re (widget-create 'regexp :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
+      (setq-local elgrep-w-file-name-re (widget-create 'regexp
+						       :prompt-history 'elgrep-file-name-re-hist
+						       :keymap elgrep-menu-hist-map
+						       :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
       (setq-local elgrep-w-exclude-file-re (widget-create 'regexp :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
       (setq-local elgrep-w-dir-re (widget-create 'regexp :format "Directory Name Regular Expression: %v" ""))
       (setq-local elgrep-w-exclude-dir-re (widget-create 'regexp :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
