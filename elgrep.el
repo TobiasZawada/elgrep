@@ -154,15 +154,15 @@ Keywords supported: :test"
 (defun elgrep-menu-elgrep ()
   "Start `elgrep' with the start-button from `elgrep-menu'."
   (interactive "@")
-  (elgrep (widget-value elgrep-w-dir)
+  (elgrep (widget-value-update-hist elgrep-w-dir)
           (widget-value-update-hist elgrep-w-file-name-re)
           (widget-value-update-hist elgrep-w-re)
           :recursive (widget-value elgrep-w-recursive)
           :c-beg (- (widget-value elgrep-w-c-beg))
           :c-end (widget-value elgrep-w-c-end)
-          :exclude-file-re (widget-value elgrep-w-exclude-file-re)
-          :dir-re (widget-value elgrep-w-dir-re)
-          :exclude-dir-re (widget-value elgrep-w-exclude-dir-re)
+          :exclude-file-re (widget-value-update-hist elgrep-w-exclude-file-re)
+          :dir-re (widget-value-update-hist elgrep-w-dir-re)
+          :exclude-dir-re (widget-value-update-hist elgrep-w-exclude-dir-re)
           :interactive t
           :search-fun (widget-value elgrep-w-search-fun)))
 
@@ -187,15 +187,24 @@ See definition of `elgrep-menu' for an example."
   "Current position in text widget history.
 Used in `elgrep-menu-hist-up' and `elgrep-menu-hist-down'.")
 
-(defun elgrep-menu-hist-move (dir)
-  "Move in :prompt-history of widget at point in direction dir which can be -1 or +1."
-  (when-let ((wid (widget-at))
-	     (histvar (widget-get wid :prompt-history))
-	     (hist (cons (widget-value wid) (symbol-value histvar))))
-    (unless (memq last-command '(elgrep-menu-hist-up elgrep-menu-hist-down))
-      (setq elgrep-menu-hist-pos 0))
-    (setq elgrep-menu-hist-pos (mod (+ elgrep-menu-hist-pos dir) (length hist)))
-    (widget-value-set wid (nth elgrep-menu-hist-pos hist))))
+(let (hist) ;; We exploit lexical binding here!
+  (defun elgrep-menu-hist-move (dir)
+    "Move in :prompt-history of widget at point in direction DIR which can be -1 or +1."
+    (when-let ((wid (widget-at))
+               (histvar (widget-get wid :prompt-history)))
+      (unless hist (setq hist (cons (widget-value wid) (symbol-value histvar))))
+      (unless (memq last-command '(elgrep-menu-hist-up elgrep-menu-hist-down))
+        (setq hist (cons (widget-value wid) (symbol-value histvar)))
+        (setq elgrep-menu-hist-pos 0))
+      (let ((start elgrep-menu-hist-pos))
+        (while
+            (progn
+              (setq elgrep-menu-hist-pos (mod (+ elgrep-menu-hist-pos dir) (length hist)))
+              (condition-case nil
+                  (progn
+                    (widget-value-set wid (nth elgrep-menu-hist-pos hist))
+                    nil)
+                (error (/= elgrep-menu-hist-pos start)))))))))
 
 (defun elgrep-menu-hist-up ()
   "Choose next item in :prompt-history of widget at point."
@@ -207,12 +216,22 @@ Used in `elgrep-menu-hist-up' and `elgrep-menu-hist-down'.")
   (interactive)
   (elgrep-menu-hist-move -1))
 
-(defvar elgrep-menu-hist-map (let ((map (copy-keymap widget-text-keymap)))
+(defvar elgrep-menu-hist-map (let ((map (copy-keymap widget-field-keymap)))
 			       (define-key map (kbd "<M-up>") #'elgrep-menu-hist-up)
+                               (define-key map (kbd "ESC <up>") #'elgrep-menu-hist-up)
 			       (define-key map (kbd "<M-down>") #'elgrep-menu-hist-down)
+                               (define-key map (kbd "ESC <down>") #'elgrep-menu-hist-down)
 			       map)
   "Widget menu used for text widgets with history.
 Binds M-up and M-down to one step in history up and down, respectively.")
+
+(defun elgrep-wid-dir-to-internal (wid value)
+  "Assert that the value of WID is a dir and return VALUE."
+  (cl-assert (and (stringp value)
+                  (file-directory-p value))
+             nil
+             (format "The value of widget %S must be a directory" (widget-get wid :format)))
+  value)
 
 (defun elgrep-menu (&optional reset)
   "Present a menu with most of the parameters for `elgrep'.
@@ -232,19 +251,37 @@ You can adjust the parameters there and start `elgrep'."
 			       (elgrep-menu-reset-map (lambda () (interactive "@") (elgrep-menu t))))
       (buffer-disable-undo)
       (let ((caption "Elgrep Menu"))
-	(widget-insert (concat caption "\n" (make-string (length caption) ?=) "\n\n")))
+	(widget-insert (concat caption "
+" (make-string (length caption) ?=) "
+
+Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
+
+")))
       (setq-local elgrep-w-re (widget-create 'editable-field
 					     :prompt-history 'elgrep-re-hist
 					     :keymap elgrep-menu-hist-map
 					     :format "Regular Expression: %v" ""))
-      (setq-local elgrep-w-dir (widget-create 'directory :format "Directory: %v" default-directory))
+      (setq-local elgrep-w-dir (widget-create 'directory
+                                              :prompt-history 'file-name-history
+                                              :keymap elgrep-menu-hist-map
+                                              :value-to-internal #'elgrep-wid-dir-to-internal
+                                              :format "Directory: %v" default-directory))
       (setq-local elgrep-w-file-name-re (widget-create 'regexp
 						       :prompt-history 'elgrep-file-name-re-hist
 						       :keymap elgrep-menu-hist-map
 						       :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
-      (setq-local elgrep-w-exclude-file-re (widget-create 'regexp :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
-      (setq-local elgrep-w-dir-re (widget-create 'regexp :format "Directory Name Regular Expression: %v" ""))
-      (setq-local elgrep-w-exclude-dir-re (widget-create 'regexp :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
+      (setq-local elgrep-w-exclude-file-re (widget-create 'regexp
+                                                          :prompt-history 'regexp-history
+                                                          :keymap elgrep-menu-hist-map
+                                                          :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
+      (setq-local elgrep-w-dir-re (widget-create 'regexp
+                                                 :prompt-history 'regexp-history
+                                                 :keymap elgrep-menu-hist-map
+                                                 :format "Directory Name Regular Expression: %v" ""))
+      (setq-local elgrep-w-exclude-dir-re (widget-create 'regexp
+                                                         :prompt-history 'regexp-history
+                                                         :keymap elgrep-menu-hist-map
+                                                         :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
       (widget-insert  "Recurse into subdirectories ")
       (setq-local elgrep-w-recursive (widget-create 'checkbox nil))
       (setq-local elgrep-w-c-beg (widget-create 'number :format "\nContext Lines Before The Match: %v" 0))
