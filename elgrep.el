@@ -233,6 +233,7 @@ Binds M-up and M-down to one step in history up and down, respectively.")
              (format "The value of widget %S must be a directory" (widget-get wid :format)))
   value)
 
+;;;###autoload
 (defun elgrep-menu (&optional reset)
   "Present a menu with most of the parameters for `elgrep'.
 Reset the menu entries if RESET is non-nil.
@@ -375,6 +376,7 @@ OPTIONS is a plist of options as for `elgrep'."
 	  (funcall formatter fname stack))
 	))))
 
+;;;###autoload
 (defun elgrep (dir file-name-re re &rest options)
   "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
 This is done via Emacs Lisp (no dependence on external grep).
@@ -547,6 +549,7 @@ Avoid descriptive header into <*elgrep*> buffer."
 	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))
       filematches)))
 
+;;;###autoload
 (easy-menu-add-item global-map '("menu-bar" "tools") ["Search Files (Elgrep)..." elgrep-menu t] "grep")
 
 (defun elgrep-first-error-no-select (&optional n)
