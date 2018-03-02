@@ -9,7 +9,7 @@ PDF-files can also be searched but for that purpose the external tool `pdftotext
 
 Installation
 ----
-Save `elgrep.el` in one of the directories specified in the `laod-path` of emacs and
+Save `elgrep.el` in one of the directories specified in the `load-path` of emacs and
 put the following line into your initialization file (e.g., `~/.emacs`):
 
 `(require 'elgrep)`
