@@ -37,7 +37,12 @@
 
 (require 'widget)
 (eval-when-compile
-  (require 'wid-edit))
+  (require 'subr-x))
+
+(require 'wid-edit) ; for widget-at and widget-value-set
+
+(declare-function dired-build-subdir-alist "dired")
+(declare-function elgrep-menu-hist-move "elgrep" (dir) t)
 
 (require 'cl-lib)
 (require 'easymenu)
