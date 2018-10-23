@@ -6,7 +6,7 @@
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1
 ;; URL: https://github.com/TobiasZawada/elgrep
-;; Package-Requires: ((emacs "25.1"))
+;; Package-Requires: ((emacs "25.1") (async "1.9.2"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -73,7 +73,7 @@ See `elgrep' and `elgrep-menu' for details."
   "Like `insert-file-contents' for FILENAME.
 It uses `pdftotext' (poppler) for pdf-files (with file extension pdf).
 VISIT is passed as second argument to `insert-file-contents'."
-  (if (string-match (downcase filename) "\.pdf\\'")
+  (if (string-match  "\.pdf\\'" (downcase filename))
       (call-process "pdftotext" filename (current-buffer) visit "-" "-")
     (insert-file-contents filename visit)))
 
@@ -138,12 +138,15 @@ Keywords supported: :test"
 (defvar elgrep-w-file-name-re)
 (defvar elgrep-w-re)
 (defvar elgrep-w-recursive)
+(defvar elgrep-w-mindepth)
+(defvar elgrep-w-maxdepth)
 (defvar elgrep-w-c-beg)
 (defvar elgrep-w-c-end)
 (defvar elgrep-w-exclude-file-re)
 (defvar elgrep-w-dir-re)
 (defvar elgrep-w-exclude-dir-re)
 (defvar elgrep-w-search-fun)
+(defvar elgrep-w-async)
 
 (defun elgrep-widget-value-update-hist (wid)
   "Get value of widget WID and update its :prompt-history variable."
@@ -160,16 +163,19 @@ Keywords supported: :test"
   "Start `elgrep' with the start-button from `elgrep-menu'."
   (interactive "@")
   (elgrep (elgrep-widget-value-update-hist elgrep-w-dir)
-          (elgrep-widget-value-update-hist elgrep-w-file-name-re)
-          (elgrep-widget-value-update-hist elgrep-w-re)
-          :recursive (widget-value elgrep-w-recursive)
-          :c-beg (- (widget-value elgrep-w-c-beg))
-          :c-end (widget-value elgrep-w-c-end)
-          :exclude-file-re (elgrep-widget-value-update-hist elgrep-w-exclude-file-re)
-          :dir-re (elgrep-widget-value-update-hist elgrep-w-dir-re)
-          :exclude-dir-re (elgrep-widget-value-update-hist elgrep-w-exclude-dir-re)
-          :interactive t
-          :search-fun (widget-value elgrep-w-search-fun)))
+	  (elgrep-widget-value-update-hist elgrep-w-file-name-re)
+	  (elgrep-widget-value-update-hist elgrep-w-re)
+	  :recursive (widget-value elgrep-w-recursive)
+	  :mindepth (widget-value elgrep-w-mindepth)
+	  :maxdepth (widget-value elgrep-w-maxdepth)
+	  :c-beg (- (widget-value elgrep-w-c-beg))
+	  :c-end (widget-value elgrep-w-c-end)
+	  :exclude-file-re (elgrep-widget-value-update-hist elgrep-w-exclude-file-re)
+	  :dir-re (elgrep-widget-value-update-hist elgrep-w-dir-re)
+	  :exclude-dir-re (elgrep-widget-value-update-hist elgrep-w-exclude-dir-re)
+	  :interactive t
+	  :async (widget-value elgrep-w-async)
+	  :search-fun (widget-value elgrep-w-search-fun)))
 
 (defmacro elgrep-menu-with-buttons (buttons &rest body)
   "Define BUTTONS and execute BODY with keymaps for widgets.
@@ -290,7 +296,11 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
                                                          :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
       (widget-insert  "Recurse into subdirectories ")
       (setq-local elgrep-w-recursive (widget-create 'checkbox nil))
-      (setq-local elgrep-w-c-beg (widget-create 'number :format "\nContext Lines Before The Match: %v" 0))
+      (widget-insert "\nRun asynchronously (experimental) ")
+      (setq-local elgrep-w-async (widget-create 'checkbox nil))
+      (setq-local elgrep-w-mindepth (widget-create 'number :format "\nMinimal recursion depth: %v" 0))
+      (setq-local elgrep-w-maxdepth (widget-create 'number :format "Maximal recursion depth: %v" most-positive-fixnum))
+      (setq-local elgrep-w-c-beg (widget-create 'number :format "Context Lines Before The Match: %v" 0))
       (setq-local elgrep-w-c-end (widget-create 'number :format "Context Lines After The Match: %v" 0))
       (setq-local elgrep-w-search-fun (widget-create 'function :format "Search function: %v " #'re-search-forward))
       (widget-insert "\n")
@@ -381,6 +391,12 @@ OPTIONS is a plist of options as for `elgrep'."
 	  (funcall formatter fname stack))
 	))))
 
+(defun elgrep-dir-name (dir)
+  "Expand DIR with substitution of environment variables."
+  (if dir
+      (expand-file-name (directory-file-name (substitute-in-file-name dir)))
+    default-directory))
+
 ;;;###autoload
 (defun elgrep (dir file-name-re re &rest options)
   "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
@@ -453,33 +469,74 @@ Defaults to `re-search-forward'.
 Keep buffer <*elgrep*> even when there are no matches.
 
 :no-header
-Avoid descriptive header into <*elgrep*> buffer."
+Avoid descriptive header into <*elgrep*> buffer.
+
+:async
+Asynchronous search (experimental).
+
+:mindepth Minimal depth. Defaults to 0.
+
+:maxdepth Maximal depth. Defaults to the value of `most-positive-fixnum'.
+
+:depth Internal. Should not be used."
   (interactive (let ((dir (read-directory-name "Directory:")))
 		 (append (list dir
 			       (let ((default-file-name-regexp (elgrep-default-filename-regexp dir)))
 				 (read-regexp (concat "File-name regexp (defaults:\"\" and \"" default-file-name-regexp "\"):") (list "" default-file-name-regexp) 'elgrep-file-name-re-hist)
 				 )
 			       (read-regexp "Emacs regexp:" nil 'elgrep-re-hist))
-			 (when current-prefix-arg (list :recursive t)))))
+			 (list :recursive current-prefix-arg
+			       :interactive t ;; during debugging `called-interactively-p' returns nil
+			       ))))
+  (when (called-interactively-p 'any)
+    (setq options (plist-put options :interactive t)))
   (when (and (stringp re) (= (length re) 0))
     (setq re nil))
-  (unless dir
-    (setq dir default-directory))
-  (setq dir (expand-file-name (directory-file-name (substitute-in-file-name dir))))
-  (with-current-buffer (get-buffer-create "*elgrep*")
+  (setq dir (elgrep-dir-name dir))
+  (let ((elgrep-path (locate-library "elgrep")))
+    (if (plist-get options :async)
+	(async-start
+	 `(lambda ()
+	    (load-library ,elgrep-path)
+	    (apply #'elgrep-search ,dir ,file-name-re ,re '(,@options)))
+	 `(lambda (filematches)
+	    (apply #'elgrep-show filematches ,dir ,file-name-re ,re '(,@options))))
+      (apply #'elgrep-show (apply #'elgrep-search dir file-name-re re options)
+	     dir file-name-re re options))))
+
+(defun elgrep-search (dir file-name-re re &rest options)
+  "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
+This is done via Emacs Lisp (no dependence on external grep).
+Return list of filematches.
+
+Each filematch is a cons (file . matchdata).
+file is the file name.
+matchdata is a list of matches.
+Each match is a list of sub-matches.
+Each submatch is a plist of :match, :context, :line,
+:linestart, :beg and :end.
+
+See `elgrep' for the valid options in plist OPTIONS."
+  (setq dir (elgrep-dir-name dir))
+  (with-current-buffer (get-buffer-create " *elgrep-search*")
     (buffer-disable-undo)
     (setq default-directory dir)
+    (unless (plist-get options :depth)
+      (setq options (plist-put options :depth 0)))
     (let ((files (directory-files dir (plist-get options :abs) file-name-re))
 	  filematches
-	  (inhibit-read-only t)
+	  (depth (plist-get options :depth))
+	  (mindepth (or (plist-get options :mindepth) 0))
+	  (maxdepth (or (plist-get options :maxdepth) most-positive-fixnum))
 	  (c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
 	  (exclude-file-re (plist-get options :exclude-file-re))
           (search-fun (or (plist-get options :search-fun) #'re-search-forward)))
       (when (and exclude-file-re (null (string-equal exclude-file-re "")))
 	(setq files (cl-remove-if (lambda (fname) (string-match exclude-file-re fname)) files)))
       (cl-loop for file in files do
-	    (when (file-regular-p file)
-	      (if re
+	       (when (and (file-regular-p file)
+			  (>= depth mindepth))
+		 (if re
 		  (progn
 		    (erase-buffer)
 		    (elgrep-insert-file-contents (if (plist-get options :abs) file (expand-file-name file dir)))
@@ -512,7 +569,8 @@ Avoid descriptive header into <*elgrep*> buffer."
 		;; no re given; just register file with dummy matchdata
 		(setq filematches (cons (list file) filematches)))))
       (setq filematches (nreverse filematches))
-      (when (plist-get options :recursive)
+      (when (and (plist-get options :recursive)
+		 (< depth maxdepth))
 	(setq files (cl-loop for file in (directory-files dir)
 			     if (and (file-directory-p (expand-file-name file dir))
 				     (let ((dir-re (plist-get options :dir-re))
@@ -525,19 +583,28 @@ Avoid descriptive header into <*elgrep*> buffer."
 						  (string-match exclude-dir-re file)))))
 				     (null (string-match "^\\.[.]?\\'" file)))
 			     collect file))
-	(dolist (file files)
-	  (setq filematches
-		(append
-		 (if (plist-get options :abs)
-		     (apply 'elgrep (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t options)
-		   (let ((files (apply 'elgrep (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t options)))
-		     ;;(debug)
-		     (cl-loop for f in files do
-			      (setcar f (file-relative-name (expand-file-name (car f) file))))
-		     files))
-		 filematches))))
-      (when (or (plist-get options :interactive) (called-interactively-p 'any))
-	(cl-assert (string-equal (buffer-name) "*elgrep*") nil "Expected buffer <*elgrep*> got %s." (current-buffer))
+	(let ((deep-options (plist-put (cl-copy-list options) :depth (1+ depth))))
+	  (dolist (file files)
+	    (setq filematches
+		  (append
+		   (if (plist-get options :abs)
+		       (apply #'elgrep-search (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t deep-options)
+		     (let ((files (apply #'elgrep-search (expand-file-name file dir) file-name-re re :keep-elgrep-buffer t deep-options)))
+		       ;;(debug)
+		       (cl-loop for f in files do
+				(setcar f (file-relative-name (expand-file-name (car f) file))))
+		       files))
+		   filematches)))))
+      filematches)))
+
+(defun elgrep-show (filematches dir file-name-re re &rest options)
+"Show FILEMATCHES generated by `elgrep-search' with DIR FILE-NAME-RE RE OPTIONS.
+See `elgrep' for the valid options in the plist OPTIONS."
+  (when (or (plist-get options :interactive) (called-interactively-p 'any))
+    (unless dir
+      (setq dir (or default-directory)))
+    (let ((inhibit-read-only t))
+      (with-current-buffer (get-buffer-create "*elgrep*")
 	(if filematches
 	    (progn
 	      (unless (plist-get options :abs)
@@ -551,8 +618,8 @@ Avoid descriptive header into <*elgrep*> buffer."
 	      (display-buffer (current-buffer)))
 	  (unless (plist-get options :keep-elgrep-buffer)
 	    (kill-buffer))
-	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))
-      filematches)))
+	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))))
+  filematches)
 
 ;;;###autoload
 (easy-menu-add-item global-map '("menu-bar" "tools") ["Search Files (Elgrep)..." elgrep-menu t] "grep")
