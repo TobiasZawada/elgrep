@@ -6,7 +6,7 @@
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1
 ;; URL: https://github.com/TobiasZawada/elgrep
-;; Package-Requires: ((emacs "25.1") (async "1.9.2"))
+;; Package-Requires: ((emacs "25.1"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -142,6 +142,7 @@ Keywords supported: :test"
 (defvar elgrep-w-maxdepth)
 (defvar elgrep-w-c-beg)
 (defvar elgrep-w-c-end)
+(defvar elgrep-w-c-case-fold-search)
 (defvar elgrep-w-exclude-file-re)
 (defvar elgrep-w-dir-re)
 (defvar elgrep-w-exclude-dir-re)
@@ -170,6 +171,7 @@ Keywords supported: :test"
 	  :maxdepth (widget-value elgrep-w-maxdepth)
 	  :c-beg (- (widget-value elgrep-w-c-beg))
 	  :c-end (widget-value elgrep-w-c-end)
+	  :case-fold-search (widget-value elgrep-w-c-case-fold-search)
 	  :exclude-file-re (elgrep-widget-value-update-hist elgrep-w-exclude-file-re)
 	  :dir-re (elgrep-widget-value-update-hist elgrep-w-dir-re)
 	  :exclude-dir-re (elgrep-widget-value-update-hist elgrep-w-exclude-dir-re)
@@ -302,6 +304,13 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
       (setq-local elgrep-w-maxdepth (widget-create 'number :format "Maximal recursion depth: %v" most-positive-fixnum))
       (setq-local elgrep-w-c-beg (widget-create 'number :format "Context Lines Before The Match: %v" 0))
       (setq-local elgrep-w-c-end (widget-create 'number :format "Context Lines After The Match: %v" 0))
+      (setq-local elgrep-w-c-case-fold-search
+		  (widget-create
+		   '(choice :tag "Case Sensitivity" :format "%t: %[Options%] %v" :doc "Ignore case."
+			    :value default
+			    (const :tag "Default (Value of `case-fold-search')" default)
+			    (const :tag "Case Insensitive Search" t)
+			    (const :tag "Case Sensitive Search" nil))))
       (setq-local elgrep-w-search-fun (widget-create 'function :format "Search function: %v " #'re-search-forward))
       (widget-insert "\n")
       (widget-create 'push-button (propertize "Start elgrep" 'keymap elgrep-menu-start-map 'mouse-face 'highlight 'help-echo "<down-mouse-1> or <return>: Start elgrep with the specified parameters"))
@@ -458,6 +467,10 @@ that should not be entered in recursive grep.
 If this is the empty string no directories are excluded.
 Defaults to \"^\\.\".
 
+:case-fold-search
+Ignore case if non-nil.
+Defaults to the value of `case-fold-search'.
+
 :search-fun
 Function to search forward for occurences of RE
 with the same arguments as `re-search-forward'.
@@ -523,6 +536,10 @@ See `elgrep' for the valid options in plist OPTIONS."
     (setq default-directory dir)
     (unless (plist-get options :depth)
       (setq options (plist-put options :depth 0)))
+    (when (or
+	   (null (plist-member options :case-fold-search))
+	   (eq (plist-get options :case-fold-search) 'default))
+      (setq options (plist-put options :case-fold-search case-fold-search)))
     (let ((files (directory-files dir (plist-get options :abs) file-name-re))
 	  filematches
 	  (depth (plist-get options :depth))
@@ -530,6 +547,7 @@ See `elgrep' for the valid options in plist OPTIONS."
 	  (maxdepth (or (plist-get options :maxdepth) most-positive-fixnum))
 	  (c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
 	  (exclude-file-re (plist-get options :exclude-file-re))
+	  (case-fold-search (plist-get options :case-fold-search))
           (search-fun (or (plist-get options :search-fun) #'re-search-forward)))
       (when (and exclude-file-re (null (string-equal exclude-file-re "")))
 	(setq files (cl-remove-if (lambda (fname) (string-match exclude-file-re fname)) files)))
