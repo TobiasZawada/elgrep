@@ -9,6 +9,8 @@ PDF-files can also be searched but for that purpose the external tool `pdftotext
 
 Installation
 ----
+Elgrep is available via Melpa. So you can just do `M-x package-install RET` and input `elgrep` as the package to be installed.
+
 Save `elgrep.el` in one of the directories specified in the `load-path` of emacs and
 put the following line into your initialization file (e.g., `~/.emacs`):
 
