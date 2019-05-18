@@ -406,6 +406,17 @@ OPTIONS is a plist of options as for `elgrep'."
       (expand-file-name (directory-file-name (substitute-in-file-name dir)))
     default-directory))
 
+(defun elgrep-intern-plist-keys (plist)
+  "Intern all string keys of PLIST that are given.
+Keys given as symbols are not touched.
+This is a destructive operation."
+  (cl-loop for key in-ref plist by #'cddr
+	   if (stringp key)
+	   do (setf key (intern key)))
+  plist)
+;; Test:
+;; (equal (elgrep-intern-plist-keys (list ":first" 1 :second "2" ":third" 3)) '(:first 1 :second "2" :third 3))
+
 ;;;###autoload
 (defun elgrep (dir file-name-re re &rest options)
   "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
@@ -447,6 +458,7 @@ Defaults to `buffer-substring-no-properties'.
 :recursive
 t: also grep recursively subdirectories in dir
 \(also if called interactively with prefix arg)
+Defaults to nil.
 
 :formatter
 Formatting function to call for each match
@@ -455,6 +467,8 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 
 :exclude-file-re
 Regular expression matching the files that should not be grepped.
+Do not exclude files if this option is nil, unset, or the empty string.
+Defaults to nil.
 
 :dir-re
 Regular expression matching the directories
@@ -503,6 +517,8 @@ Asynchronous search (experimental).
 			       ))))
   (when (called-interactively-p 'any)
     (setq options (plist-put options :interactive t)))
+  ;; make elgrep eshell friendly:
+  (setq options (elgrep-intern-plist-keys options))
   (when (and (stringp re) (= (length re) 0))
     (setq re nil))
   (setq dir (elgrep-dir-name dir))
@@ -639,6 +655,8 @@ See `elgrep' for the valid options in the plist OPTIONS."
 	  (message "elgrep: No matches for \"%s\" in files \"%s\" of dir \"%s\"." re file-name-re dir)))))
   filematches)
 
+;;;###autoload
+(require 'easymenu)
 ;;;###autoload
 (easy-menu-add-item global-map '("menu-bar" "tools") ["Search Files (Elgrep)..." elgrep-menu t] "grep")
 
