@@ -6,7 +6,7 @@
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1.0.0
 ;; URL: https://github.com/TobiasZawada/elgrep
-;; Package-Requires: ((emacs "25.1"))
+;; Package-Requires: ((emacs "25.1") (async "1.5"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -47,6 +47,7 @@
 (require 'cl-lib)
 (require 'easymenu)
 (require 'grep) ; also provides "compile"
+(require 'async)
 
 ;; For safity reasons `elgrep-edit' exploits the text properties
 ;; `elgrep-context', `elgrep-context-begin', `elgrep-context-end'
