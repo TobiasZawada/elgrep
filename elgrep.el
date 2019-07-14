@@ -103,8 +103,8 @@ of the line with the match, respectively."
   `(if (stringp ,num-or-re)
        (save-excursion
 	 (save-match-data
-	   (,search-op ,num-or-re nil t) ;; t=noerror
-	   (,pos-op)
+	   (when (,search-op ,num-or-re nil t) ;; t=noerror
+	     (,pos-op))
 	   ))
      (,pos-op (and ,num-or-re (1+ ,num-or-re)))))
 
@@ -494,8 +494,8 @@ Defaults to the value of `case-fold-search'.
 :search-fun
 Function to search forward for occurences of RE
 with the same arguments as `re-search-forward'.
-It is actually not required that REGEXP is a regular expression.
-t just must be be understood by :search-fun.
+It gets RE as first argument.
+Thereby it is not required that RE is a regular expression.
 Defaults to `re-search-forward'.
 
 :keep-elgrep-buffer
@@ -585,24 +585,26 @@ See `elgrep' for the valid options in plist OPTIONS."
 			  (last-pos (point-min)))
 		      (goto-char (point-min))
 		      (while (funcall search-fun re nil t)
-			(let* ((n (/ (length (match-data)) 2))
-			       (matchdata (cl-loop for i from 0 below n
-						   collect
-						   (let ((context-beginning (save-excursion
-									      (goto-char (match-beginning 0))
-									      (elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
-							 (context-end (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
-						     (list :match (match-string-no-properties i)
-							   :context (funcall c-op context-beginning context-end)
-							   :line (prog1
-								     (setq last-line-number
-									   (+ last-line-number
-									      (count-lines last-pos (line-beginning-position))))
-								   (setq last-pos (line-beginning-position)))
-							   :context-beg context-beginning
-							   :context-end context-end
-							   :beg (match-beginning i)
-							   :end (match-end i))))))
+			(when-let* ((n (/ (length (match-data)) 2))
+				    (context-beginning
+				     (save-excursion
+				       (goto-char (match-beginning 0))
+				       (elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
+				    (context-end (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward))
+				    (matchdata (cl-loop
+						for i from 0 below n
+						collect
+						(list :match (match-string-no-properties i)
+						      :context (funcall c-op context-beginning context-end)
+						      :line (prog1
+								(setq last-line-number
+								      (+ last-line-number
+									 (count-lines last-pos (line-beginning-position))))
+							      (setq last-pos (line-beginning-position)))
+						      :context-beg context-beginning
+						      :context-end context-end
+						      :beg (match-beginning i)
+						      :end (match-end i)))))
 			  (setq filematch (cons matchdata filematch))))
 		      (when filematch
 			(setq filematches (cons (cons file (nreverse filematch)) filematches)))))
