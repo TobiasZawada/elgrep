@@ -668,6 +668,8 @@ See `elgrep' for the valid options in the plist OPTIONS."
 ;;;###autoload
 (easy-menu-add-item global-map '("menu-bar" "tools") ["Search Files (Elgrep)..." elgrep-menu t] "grep")
 
+(defvar next-error-highlight-no-select) ;; defined in "simple.el"
+
 (defun elgrep-first-error-no-select (&optional n)
   "Restart at first error.
 Visit corresponding source code.
