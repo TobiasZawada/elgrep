@@ -590,21 +590,26 @@ See `elgrep' for the valid options in plist OPTIONS."
 				     (save-excursion
 				       (goto-char (match-beginning 0))
 				       (elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
-				    (context-end (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward))
-				    (matchdata (cl-loop
-						for i from 0 below n
-						collect
-						(list :match (match-string-no-properties i)
-						      :context (funcall c-op context-beginning context-end)
-						      :line (prog1
-								(setq last-line-number
-								      (+ last-line-number
-									 (count-lines last-pos (line-beginning-position))))
-							      (setq last-pos (line-beginning-position)))
-						      :context-beg context-beginning
-						      :context-end context-end
-						      :beg (match-beginning i)
-						      :end (match-end i)))))
+				    (context-end
+				     (save-excursion
+				       (goto-char context-beginning)
+				       (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
+				    (matchdata (and
+						(< (match-end 0) context-end)
+						(cl-loop
+						 for i from 0 below n
+						 collect
+						 (list :match (match-string-no-properties i)
+						       :context (funcall c-op context-beginning context-end)
+						       :line (prog1
+								 (setq last-line-number
+								       (+ last-line-number
+									  (count-lines last-pos (line-beginning-position))))
+							       (setq last-pos (line-beginning-position)))
+						       :context-beg context-beginning
+						       :context-end context-end
+						       :beg (match-beginning i)
+						       :end (match-end i))))))
 			  (setq filematch (cons matchdata filematch))))
 		      (when filematch
 			(setq filematches (cons (cons file (nreverse filematch)) filematches)))))
