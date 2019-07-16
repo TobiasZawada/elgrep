@@ -94,19 +94,29 @@ VISIT is passed as second argument to `insert-file-contents'."
   (dired-mode)
   (dired-build-subdir-alist))
 
-(defmacro elgrep-line-position (num-or-re pos-op search-op)
-  "If NUM-OR-RE is a number then act like (POS-OP (1+ NUM-OR-RE)).
+(defmacro elgrep-line-position (limiter pos-op search-op)
+  "If LIMITER is a number then act like (POS-OP (1+ LIMITER)).
 Thereby POS-OP is `line-end-position' or `line-beginning-position'.
-If NUM-OR-RE is a regular expression search with SEARCH-OP for that RE
+If LIMITER is a regular expression search with SEARCH-OP for that RE
+and return `line-end-position' or `line-beginning-position'
+of the line with the match, respectively.
+If LIMITER is a function call it with no args, call POS-OP afterwards,
 and return `line-end-position' or `line-beginning-position'
 of the line with the match, respectively."
-  `(if (stringp ,num-or-re)
+  `(cond
+    ((stringp ,limiter)
        (save-excursion
 	 (save-match-data
-	   (when (,search-op ,num-or-re nil t) ;; t=noerror
+	   (when (,search-op ,limiter nil t) ;; t=noerror
 	     (,pos-op))
-	   ))
-     (,pos-op (and ,num-or-re (1+ ,num-or-re)))))
+	   )))
+    ((numberp ,limiter)
+     (,pos-op (and ,limiter (1+ ,limiter))))
+    ((functionp ,limiter)
+     (save-excursion
+       (save-match-data
+	 (when (funcall ,limiter)
+	   (,pos-op)))))))
 
 (defun elgrep-classify (classifier list &rest options)
   "Use CLASSIFIER to map the LIST entries to class denotators.
@@ -250,7 +260,9 @@ Binds M-up and M-down to one step in history up and down, respectively.")
 
 (define-widget 'elgrep-context-widget 'menu-choice
   "Widget type for `elgrep-w-c-beg' and `elgrep-w-c-end'."
-  :value 0 :args '((number :tag "Number of Lines") (regexp :tag "Regexp")))
+  :value 0 :args '((number :tag "Number of Lines")
+		   (regexp :tag "Regexp")
+		   (function :tag "Function")))
 
 ;;;###autoload
 (defun elgrep-menu (&optional reset)
