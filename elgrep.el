@@ -102,7 +102,9 @@ and return `line-end-position' or `line-beginning-position'
 of the line with the match, respectively.
 If LIMITER is a function call it with no args, call POS-OP afterwards,
 and return `line-end-position' or `line-beginning-position'
-of the line with the match, respectively."
+of the line with the match, respectively.
+
+Default action is (POS-OP)."
   `(cond
     ((stringp ,limiter)
        (save-excursion
@@ -111,12 +113,14 @@ of the line with the match, respectively."
 	     (,pos-op))
 	   )))
     ((numberp ,limiter)
-     (,pos-op (and ,limiter (1+ ,limiter))))
+     (,pos-op (1+ ,limiter)))
     ((functionp ,limiter)
      (save-excursion
        (save-match-data
 	 (when (funcall ,limiter)
-	   (,pos-op)))))))
+	   (,pos-op)))))
+    (t
+     (,pos-op))))
 
 (defun elgrep-classify (classifier list &rest options)
   "Use CLASSIFIER to map the LIST entries to class denotators.
