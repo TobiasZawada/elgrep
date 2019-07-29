@@ -611,7 +611,7 @@ See `elgrep' for the valid options in plist OPTIONS."
 				       (goto-char context-beginning)
 				       (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
 				    (matchdata (and
-						(< (match-end 0) context-end)
+						(<= (match-end 0) context-end)
 						(cl-loop
 						 for i from 0 below n
 						 collect
