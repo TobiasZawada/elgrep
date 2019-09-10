@@ -279,10 +279,6 @@ The option is ignored if the predicate is 'ignore.
 There are also widgets that are not available as `elgrep' options
 such as `elgrep-w-start'.")
 
-(defun elgrep-menu-reset ()
-  ""
-  )
-
 (defun elgrep-menu-arg-list ()
   "Collect `elgrep' arguments from `elgrep-menu' buffer."
   (interactive "@")
@@ -551,17 +547,24 @@ If the value of OLD is nil no old widget is deleted."
   :help-echo "Paste data from clipboard into this entry."
   :action 'elgrep-menu-call-paste-button-action)
 
+(define-widget 'elgrep-menu-call-run-button 'push-button
+  "Run button widget for elgrep."
+  :tag "RUN"
+  :help-echo "Run the elgrep command of this entry."
+  :action 'elgrep-menu-call-run-button-action)
+
 (defconst widget-editable-list-button-alist
   '((?✂ . elgrep-menu-call-cut-button)
     (?∥ . elgrep-menu-call-copy-button)
     (?• . elgrep-menu-call-paste-button)
     (?␡ . elgrep-menu-call-overwrite-button)
+    (?▶ . elgrep-menu-call-run-button)
     (?i . insert-button)
     (?d . delete-button))
   "Alist mapping widget format characters to widget types.")
 
 (defun elgrep-menu-call-notify (widget changed &optional _event)
-  ""
+  "Set `elgrep-call-list' item if subwidget CHANGED of WIDGET changed."
   (if (eq widget changed) ;; list structure changed
       (setq elgrep-call-list (widget-value widget))
     (let ((index (widget-get changed :index)))
@@ -604,10 +607,24 @@ and set help-echo to the error message."
 
 (define-widget 'elgrep-menu-call-list 'editable-list
   "Like `editable-list' widget with a name string and an elgrep form."
-  :entry-format "%i %d %∥ %␡ %• %v"
+  :format "%v%i %•\n"
+  :entry-format "%i %d %∥ %␡ %• %▶ %v"
+  :format-handler #'elgrep-menu-call-list-format-handler
   :value-create #'elgrep-menu-call-list-value-create
   :insert-before #'elgrep-menu-call-list-insert-before
   :notify #'elgrep-menu-call-notify)
+
+(defun elgrep-menu-call-list-format-handler (widget escape)
+  "Handle :format of WIDGET `elgrep-menu-call-list' for char ESCAPE."
+  (let ((wid-type (cdr (assoc escape widget-editable-list-button-alist))))
+    (if wid-type
+	(progn
+	  (and (widget-get widget :indent)
+	       (insert-char ?\s (widget-get widget :indent)))
+	  (apply 'widget-create-child-and-convert
+		 widget wid-type
+		 (widget-get widget :append-button-args)))
+      (widget-default-format-handler widget escape))))
 
 (defun elgrep-menu-call-list-entry-create (widget value conv)
   "Insert also USE, UP, and DOWN buttons in WIDGET.
@@ -747,6 +764,15 @@ by the :index property."
 			  if (eq (widget-get but :widget) widget)
 			  return but)))
     (elgrep-menu-call-overwrite-button-action button)))
+
+(defun elgrep-menu-call-run-button-action (button &optional _event)
+  "Run elgrep for the associated `elgrep-menu-call-list' entry of BUTTON."
+  (if-let ((widget (widget-get button :widget))
+	   (command (cdr (widget-value widget))))
+      (progn
+	(elgrep-menu-check-elgrep-command command)
+	(apply (car command) (append (cdr command) '(:interactive t))))
+    (error "Run button action failed; command:%s" command)))
 
 (defun elgrep-menu-call-add-to-list (widget command)
   "Write elgrep COMMAND to list WIDGET.
