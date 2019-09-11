@@ -226,12 +226,21 @@ Keywords supported: :test"
 (defvar-local elgrep-menu-id 0
   "Unique id for `elgrep-menu' buffer.")
 
+(defvar-local elgrep-widget-list nil)
+
 (defun elgrep-widget-create (&rest args)
   "Like `widget-create' with ARGS but add :initial-value property.
 The :initial-value property is the :value right after the call of `widget-create'."
   (let ((wid (apply #'widget-create args)))
     (widget-put wid :initial-value (widget-value wid))
+    (cl-pushnew wid elgrep-widget-list)
     wid))
+
+(defun elgrep-menu-reset ()
+  "Set widgets in `widget-field-list' to their :initial-value if that is set."
+  (dolist (wid elgrep-widget-list)
+    (when (widget-member wid :initial-value)
+      (widget-value-set wid (widget-get wid :initial-value)))))
 
 (defun elgrep-widget-value-modified-p (wid)
   "Check whether :value of WID differs from its :initial-value.
@@ -386,6 +395,7 @@ The car of the elgrep call is a name string and the cdr is the actual elgrep com
   "Set the `elgrep-menu' widgets from COMMAND.
 COMMAND can be a form or a string containing
 the printed representation of a form."
+  (elgrep-menu-reset)
   (cl-destructuring-bind
 	(dir file-name-re re options _name) (elgrep-menu-check-elgrep-command command)
       (widget-value-set elgrep-w-dir dir)
@@ -748,6 +758,7 @@ by the :index property."
 
 (defun elgrep-menu-call-overwrite-button-action (button &optional _event)
   "Overwrite BUTTON widget value with command from clipboard."
+  (elgrep-menu-reset)
   (let* ((widget (widget-get button :widget))
 	 (command (current-kill 0)))
     (cl-destructuring-bind
