@@ -484,12 +484,12 @@ If the value of OLD is nil no old widget is deleted."
     (when (symbolp old)
       (set old wid))))
 
-(defun elgrep-wid-dir-to-internal (wid value)
+(defun elgrep-wid-dir-to-internal (_wid value)
   "Assert that the value of WID is a dir and return VALUE."
   (cl-assert (and (stringp value)
                   (file-directory-p value))
              nil
-             (format "The value of widget %S must be a directory" (widget-get wid :format)))
+             "The value %S must be a directory" value)
   value)
 
 (define-widget 'elgrep-context-widget 'menu-choice
@@ -555,7 +555,7 @@ If the value of OLD is nil no old widget is deleted."
 (define-widget 'elgrep-menu-call-paste-button 'push-button
   "Cut button widget for elgrep."
   :tag "PASTE"
-  :help-echo "Paste data from clipboard into this entry."
+  :help-echo "Paste data from clipboard into a new entry before this one."
   :action 'elgrep-menu-call-paste-button-action)
 
 (define-widget 'elgrep-menu-call-set-button 'push-button
@@ -630,6 +630,7 @@ and set help-echo to the error message."
   :format-handler #'elgrep-menu-call-list-format-handler
   :value-create #'elgrep-menu-call-list-value-create
   :insert-before #'elgrep-menu-call-list-insert-before
+  :delete-at #'elgrep-menu-call-list-delete-at
   :notify #'elgrep-menu-call-notify)
 
 (defun elgrep-menu-call-list-format-handler (widget escape)
@@ -744,6 +745,52 @@ by the :index property."
     (elgrep-menu-call-list-renumber widget)
     child))
 
+(defmacro elgrep-remove--at-macro (list index &rest copy)
+  "Helper for defining `elgrep-remove-at' and `elgrep-remove-at*'."
+  (let ((tail (make-symbol "tail")))
+    `(cond
+      ((eq ,index 0)
+       (cdr ,list))
+      ((> ,index (length ,list))
+       ,list)
+      (t
+       ,@copy
+       (let ((,tail (nthcdr (1- ,index) ,list)))
+	 (setcdr ,tail (cddr ,tail))
+	 ,list)))))
+
+(defun elgrep-remove-at* (list index)
+  "Remove element at INDEX from LIST.
+Noop if INDEX is larger than length of LIST.
+The list is modified by side-effect.
+Return the modified list."
+  (elgrep-remove--at-macro list index))
+;; tests:
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at* l 2) l))
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at* l 3) l))
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at* l 0) l))
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at* l 4) l))
+
+(defun elgrep-remove-at (list index)
+  "Remove element at INDEX from LIST.
+Noop if INDEX is larger than length of LIST.
+The original list is not modified.  It is copied if needed.
+Return the modified list."
+  (elgrep-remove--at-macro list index (setq list (cl-copy-list list))))
+;; tests:
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at l 2) l))
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at l 3) l))
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at l 0) l))
+;; (let ((l '(0 1 2 3))) (vector (elgrep-remove-at l 4) l))
+
+(defun elgrep-menu-call-list-delete-at (widget child)
+  "Delete CHILD of WIDGET.
+Essentially use `widget-editable-list-delete-at' but also
+update `elgrep-call-list'."
+  (let ((index (widget-get child :index)))
+    (setq elgrep-call-list (elgrep-remove-at elgrep-call-list index))
+    (widget-editable-list-delete-at widget child)))
+
 (defun elgrep-menu-call-cut-button-action (button &optional _event)
   "Copy command of BUTTON widget to clipboard and deleting it."
   (elgrep-menu-call-copy-button-action button)
@@ -766,13 +813,14 @@ by the :index property."
 
 (defun elgrep-menu-call-overwrite-button-action (button &optional _event)
   "Overwrite BUTTON widget value with command from clipboard."
-  (elgrep-menu-reset)
   (let* ((widget (widget-get button :widget))
+	 (idx (widget-get widget :index))
 	 (command (current-kill 0)))
     (cl-destructuring-bind
 	(dir file-name-re re options name) (elgrep-menu-check-elgrep-command command)
-      (setq command `(elgrep ,dir ,file-name-re ,re ,@options))
-      (widget-value-set widget (cons name command)))
+      (setq command (cons name  `(elgrep ,dir ,file-name-re ,re ,@options)))
+      (widget-value-set widget command)
+      (setf (nth idx elgrep-call-list) command))
     (widget-setup)))
 
 (defun elgrep-menu-call-paste-button-action (button &optional _event)
@@ -1767,7 +1815,7 @@ Search for BibTeX entries matching KEY-VAL-LIST."
 
 (defun elgrep-save-elgrep-data-file ()
   "Save the elgrep data file if `elgrep-data-file' is a string.
-This can be used as `kill-mode-hook'."
+This can be used as `kill-emacs-hook'."
   (interactive)
   (when (stringp elgrep-data-file)
     (with-temp-buffer
