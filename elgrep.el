@@ -570,7 +570,7 @@ If the value of OLD is nil no old widget is deleted."
   :help-echo "Run the elgrep command of this entry."
   :action 'elgrep-menu-call-run-button-action)
 
-(defconst widget-editable-list-button-alist
+(defconst elgrep-menu-call-list-button-alist
   '((?✂ . elgrep-menu-call-cut-button)
     (?∥ . elgrep-menu-call-copy-button)
     (?• . elgrep-menu-call-paste-button)
@@ -635,7 +635,7 @@ and set help-echo to the error message."
 
 (defun elgrep-menu-call-list-format-handler (widget escape)
   "Handle :format of WIDGET `elgrep-menu-call-list' for char ESCAPE."
-  (let ((wid-type (cdr (assoc escape widget-editable-list-button-alist))))
+  (let ((wid-type (cdr (assoc escape elgrep-menu-call-list-button-alist))))
     (if wid-type
 	(progn
 	  (and (widget-get widget :indent)
@@ -657,7 +657,7 @@ VALUE and CONV are used in `widget-editable-list-entry-create'."
        (insert (widget-get widget :entry-format)))
      (while (re-search-forward "%\\(.\\)" nil t)
        (let* ((escape (char-after (match-beginning 1)))
-	      (wid-type (cdr (assoc escape widget-editable-list-button-alist))))
+	      (wid-type (cdr (assoc escape elgrep-menu-call-list-button-alist))))
 	 (cond
 	  (wid-type
 	   (delete-char -2)
