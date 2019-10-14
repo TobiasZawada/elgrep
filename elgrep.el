@@ -46,7 +46,14 @@
 ;;   to kill the asynchronous emacs process.
 ;; 2019-09-09:
 ;; - Add `elgrep-menu-call-list' and related functions.
-
+;; 2019-10-13:
+;; - allow lists of regular expressions for the re argument of `elgrep'
+;; - add the concept of records
+;;   A file can be split into records by regexps or functions.
+;;   Each of the records is searched for all regexps in the re gargument
+;;   of `elgrep'.
+;; - Correct handling of `elgrep-data-file' such that asynchronous
+;;   calls of recursive elgrep work again.
 ;;; Code:
 
 (require 'widget)
@@ -74,6 +81,18 @@ If `elgrep-data-file' is nil nothing is saved and loaded."
   :group 'elgrep
   :type '(choice (const nil) file))
 
+(defcustom elgrep-negating-char ?!
+  "Character indicating negation in the required matches."
+  :type 'characterp
+  :group 'elgrep)
+
+(defcustom elgrep-log-buffer "*elgrep-log*"
+  "Buffer where `elgrep-log' writes its output.
+Can be a buffer or a buffer name.
+The default value is the default buffer name as string."
+  :group 'elgrep
+  :type 'string)
+
 (defvar elgrep-call-list nil
   "List of calls to `elgrep-menu-elgrep'.
 Each call is a cons of a name string (maybe empty for unnamed)
@@ -95,17 +114,15 @@ See `elgrep' and `elgrep-menu' for details."
   '("Elgrep"
     ["Elgrep-edit" elgrep-edit-mode t]))
 
+(defvar elgrep-re-hist nil
+  "History for elgrep regular expressions for `elgrep' (which see).
+May also contain lists of regular expressions.")
 (defvar elgrep-file-name-re-hist nil
   "History of file-name regular expressions for `elgrep' (which see).")
-(defvar elgrep-re-hist nil
-  "History of regular expressions for `elgrep' (which see).")
-
-(defcustom elgrep-log-buffer "*elgrep-log*"
-  "Buffer where `elgrep-log' writes its output.
-Can be a buffer or a buffer name.
-The default value is the default buffer name as string."
-  :group 'elgrep
-  :type 'string)
+(defvar elgrep-record-beg-re-hist nil
+  "History for record begin regexps.")
+(defvar elgrep-record-end-re-hist nil
+  "History for record end regexps.")
 
 (defun elgrep-log (format &rest args)
   "Log string formatted with FORMAT and ARGS in `elgrep-log-buffer'."
@@ -210,6 +227,8 @@ Keywords supported: :test"
 (defvar elgrep-w-recursive)
 (defvar elgrep-w-mindepth)
 (defvar elgrep-w-maxdepth)
+(defvar elgrep-w-r-beg)
+(defvar elgrep-w-r-end)
 (defvar elgrep-w-c-beg)
 (defvar elgrep-w-c-end)
 (defvar elgrep-w-case-fold-search)
@@ -253,11 +272,16 @@ Comparison done with `equal'."
   (when-let ((ret (widget-value wid))
 	     (hist-var (widget-get wid :prompt-history))
 	     (hist-length (or (get hist-var 'history-length) history-length)))
-    (unless (string-equal ret (car-safe (symbol-value hist-var)))
+    (unless (equal ret (car-safe (symbol-value hist-var)))
       (set hist-var (cons ret (symbol-value hist-var)))
       (when (> (length (symbol-value hist-var)) hist-length)
 	(setf (nthcdr hist-length (symbol-value hist-var)) nil)))
     ret))
+
+(defun elgrep-menu-record-p (rec)
+  "Check whether REC is an admissible value for `elgrep-w-r-beg'."
+  (or (stringp rec)
+      (functionp rec)))
 
 (defun elgrep-menu-context-p (ctxt)
   "Check whether CTXT is an admissible value for `elgrep-w-c-beg'."
@@ -268,6 +292,8 @@ Comparison done with `equal'."
 (defconst elgrep-menu-arg-alist '((recursive . booleanp)
 				  (mindepth . integerp)
 				  (maxdepth . integerp)
+				  (r-beg . elgrep-menu-record-p)
+				  (r-end . elgrep-menu-record-p)
 				  (c-beg . elgrep-menu-context-p)
 				  (c-end . elgrep-menu-context-p)
 				  (case-fold-search . booleanp)
@@ -296,14 +322,17 @@ such as `elgrep-w-start'.")
    (list (elgrep-widget-value-update-hist elgrep-w-dir)
 	 (elgrep-widget-value-update-hist elgrep-w-file-name-re)
 	 (elgrep-widget-value-update-hist elgrep-w-re))
-   (cl-loop
-    for opt in elgrep-menu-arg-alist
-    for opt-name = (symbol-name (car opt))
-    unless (eq (cdr opt) 'ignore)
-    for wid = (symbol-value (intern-soft (concat "elgrep-w-" opt-name)))
-    if (elgrep-widget-value-modified-p wid)
-    collect (intern (concat ":" opt-name))
-    and collect (widget-value wid))))
+   (let (ret opt-name wid)
+     (dolist (opt elgrep-menu-arg-alist)
+       (setq opt-name (symbol-name (car opt)))
+       (unless (eq (cdr opt) 'ignore)
+	 (setq wid (symbol-value (intern-soft (concat "elgrep-w-" opt-name))))
+	 (when (elgrep-widget-value-modified-p wid)
+	   (setq ret
+		 (cons (widget-value wid)
+		       (cons (intern (concat ":" opt-name))
+			     ret))))))
+     (nreverse ret))))
 
 (defun elgrep-menu-stop (&rest _ignore)
   "Stop elgrep process of current buffer.
@@ -326,24 +355,26 @@ If there is no elgrep process reset Start button."
        ))
     (elgrep-menu-call-add-to-list elgrep-w-call-list (cons 'elgrep (elgrep-menu-arg-list)))
     (elgrep (elgrep-widget-value-update-hist elgrep-w-dir)
-		(elgrep-widget-value-update-hist elgrep-w-file-name-re)
-		(elgrep-widget-value-update-hist elgrep-w-re)
-		:recursive (widget-value elgrep-w-recursive)
-		:mindepth (widget-value elgrep-w-mindepth)
-		:maxdepth (widget-value elgrep-w-maxdepth)
-		:c-beg (let ((val (widget-value elgrep-w-c-beg)))
-			 (if (numberp val) (- val) val))
-		:c-end (widget-value elgrep-w-c-end)
-		:case-fold-search (widget-value elgrep-w-case-fold-search)
-		:exclude-file-re (elgrep-widget-value-update-hist elgrep-w-exclude-file-re)
-		:dir-re (elgrep-widget-value-update-hist elgrep-w-dir-re)
-		:exclude-dir-re (elgrep-widget-value-update-hist elgrep-w-exclude-dir-re)
-		:interactive t
-		:async async
-		:elgrep-menu (and async elgrep-menu-id)
-		:buffer-init (widget-value elgrep-w-buffer-init)
-		:file-fun (widget-value elgrep-w-file-fun)
-		:search-fun (widget-value elgrep-w-search-fun))))
+	    (elgrep-widget-value-update-hist elgrep-w-file-name-re)
+	    (elgrep-widget-value-update-hist elgrep-w-re)
+	    :recursive (widget-value elgrep-w-recursive)
+	    :mindepth (widget-value elgrep-w-mindepth)
+	    :maxdepth (widget-value elgrep-w-maxdepth)
+	    :r-beg (widget-value elgrep-w-r-beg)
+	    :r-end (widget-value elgrep-w-r-end)
+	    :c-beg (let ((val (widget-value elgrep-w-c-beg)))
+		     (if (numberp val) (- val) val))
+	    :c-end (widget-value elgrep-w-c-end)
+	    :case-fold-search (widget-value elgrep-w-case-fold-search)
+	    :exclude-file-re (elgrep-widget-value-update-hist elgrep-w-exclude-file-re)
+	    :dir-re (elgrep-widget-value-update-hist elgrep-w-dir-re)
+	    :exclude-dir-re (elgrep-widget-value-update-hist elgrep-w-exclude-dir-re)
+	    :interactive t
+	    :async async
+	    :elgrep-menu (and async elgrep-menu-id)
+	    :buffer-init (widget-value elgrep-w-buffer-init)
+	    :file-fun (widget-value elgrep-w-file-fun)
+	    :search-fun (widget-value elgrep-w-search-fun))))
 
 (defun elgrep-menu-elgrep-command (&rest _ignore)
   "Copy elgrep command resulting from current elgrep menu settings."
@@ -379,8 +410,10 @@ The car of the elgrep call is a name string and the cdr is the actual elgrep com
       (user-error "The directory name %S must be a string" dir))
     (unless (stringp file-name-re)
       (user-error "The file name regular expression %S must be a string" file-name-re))
-    (unless (stringp re)
-      (user-error "The regular expression %S must be a string" re))
+    (unless (or (stringp re)
+		(and (listp re)
+		     (cl-every #'stringp re)))
+      (user-error "The regular expression %S must be a string or a list of strings" re))
     (cl-loop for option on options by #'cddr
 	     for key = (car option)
 	     for val = (cadr option)
@@ -398,21 +431,22 @@ COMMAND can be a form or a string containing
 the printed representation of a form."
   (elgrep-menu-reset)
   (cl-destructuring-bind
-	(dir file-name-re re options _name) (elgrep-menu-check-elgrep-command command)
-      (widget-value-set elgrep-w-dir dir)
-      (widget-value-set elgrep-w-file-name-re file-name-re)
-      (widget-value-set elgrep-w-re re)
-      (cl-loop for option on options by #'cddr
-	       for opt-sym = (car option)
-	       for predicate = (cdr (assoc-string (substring (symbol-name opt-sym) 1) elgrep-menu-arg-alist))
-	       unless (eq predicate 'ignore) do
-	       (cl-loop
-		unless (symbolp opt-sym) do (user-error "Not an elgrep option: %S" opt-sym)
-		for wid-sym = (intern-soft (concat "elgrep-w-" (substring (symbol-name opt-sym) 1)))
-		unless wid-sym do (user-error "Unknown elgrep option key :%S" (car option))
-		for wid = (symbol-value wid-sym)
-		do (widget-value-set wid (cadr option))
-		return nil))))
+      (dir file-name-re re options _name) (elgrep-menu-check-elgrep-command command)
+    (widget-value-set elgrep-w-dir dir)
+    (widget-value-set elgrep-w-file-name-re file-name-re)
+    (widget-value-set elgrep-w-re re)
+    (cl-loop for option on options by #'cddr
+	     for opt-sym = (car option)
+	     for predicate = (cdr (assoc-string (substring (symbol-name opt-sym) 1) elgrep-menu-arg-alist))
+	     unless (eq predicate 'ignore) do
+	     (cl-loop
+	      unless (symbolp opt-sym) do (user-error "Not an elgrep option: %S" opt-sym)
+	      for wid-sym = (intern-soft (concat "elgrep-w-" (substring (symbol-name opt-sym) 1)))
+	      unless wid-sym do (user-error "Unknown elgrep option key :%S" (car option))
+	      for wid = (symbol-value wid-sym)
+	      do (widget-value-set wid (cadr option))
+	      return nil)))
+  (widget-setup))
 
 (defun elgrep-menu-yank-elgrep-command (&rest _ignore)
   "Parametrize the `elgrep-menu' with the elgrep command from `kill-ring'."
@@ -491,6 +525,19 @@ If the value of OLD is nil no old widget is deleted."
              nil
              "The value %S must be a directory" value)
   value)
+
+(define-widget 'elgrep-re-widget 'editable-field
+  "Widget type for specifying regular expressions."
+  :tag "Regexp"
+  :prompt-history 'elgrep-re-hist
+  :keymap elgrep-menu-hist-map
+  :format "%t: %v"
+  "")
+
+(define-widget 'elgrep-record-widget 'menu-choice
+  "Widget type for `elgrep-w-r-beg' and `elgrep-w-r-end'."
+  :args '((regexp :tag "Regexp")
+	  (function :tag "Function")))
 
 (define-widget 'elgrep-context-widget 'menu-choice
   "Widget type for `elgrep-w-c-beg' and `elgrep-w-c-end'."
@@ -716,8 +763,8 @@ by the :index property."
 		  value (cdr answer))
 	  (setq value nil))))
     (widget-put widget :children (nreverse children)))
-    (elgrep-menu-call-list-renumber widget)
-    (setq elgrep-call-list (widget-value widget)))
+  (elgrep-menu-call-list-renumber widget)
+  (setq elgrep-call-list (widget-value widget)))
 
 (defun elgrep-menu-call-list-insert-before (widget before)
   "Insert a new child before the child widget BEFORE of WIDGET."
@@ -909,37 +956,47 @@ You can adjust the parameters there and start `elgrep'."
 Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
 
 ")))
-    (setq-local elgrep-w-re (elgrep-widget-create 'editable-field
+    (setq-local elgrep-w-re (elgrep-widget-create 'menu-choice
+						  :tag "Expression"
+						  :help-echo "Regexp or list of regexps"
+						  :value ""
 						  :prompt-history 'elgrep-re-hist
-						  :keymap elgrep-menu-hist-map
-						  :format "Regular Expression: %v" ""))
+						  '(repeat
+						    :tag "List of regexps"
+						    :default-get (lambda (wid) (list ""))
+						    elgrep-re-widget
+						    )
+						  'elgrep-re-widget
+						  ))
     (setq-local elgrep-w-dir (widget-create 'directory
 					    :prompt-history 'file-name-history
 					    :keymap elgrep-menu-hist-map
 					    :value-to-internal #'elgrep-wid-dir-to-internal
 					    :format "Directory: %v" default-directory))
     (setq-local elgrep-w-file-name-re (elgrep-widget-create 'regexp
-						     :prompt-history 'elgrep-file-name-re-hist
-						     :keymap elgrep-menu-hist-map
-						     :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
+							    :prompt-history 'elgrep-file-name-re-hist
+							    :keymap elgrep-menu-hist-map
+							    :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
     (setq-local elgrep-w-exclude-file-re (elgrep-widget-create 'regexp
-							:prompt-history 'regexp-history
-							:keymap elgrep-menu-hist-map
-							:format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
+							       :prompt-history 'regexp-history
+							       :keymap elgrep-menu-hist-map
+							       :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
     (setq-local elgrep-w-dir-re (elgrep-widget-create 'regexp
-					       :prompt-history 'regexp-history
-					       :keymap elgrep-menu-hist-map
-					       :format "Directory Name Regular Expression: %v" ""))
+						      :prompt-history 'regexp-history
+						      :keymap elgrep-menu-hist-map
+						      :format "Directory Name Regular Expression: %v" ""))
     (setq-local elgrep-w-exclude-dir-re (elgrep-widget-create 'regexp
-						       :prompt-history 'regexp-history
-						       :keymap elgrep-menu-hist-map
-						       :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
+							      :prompt-history 'regexp-history
+							      :keymap elgrep-menu-hist-map
+							      :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
     (widget-insert  "Recurse into subdirectories ")
     (setq-local elgrep-w-recursive (elgrep-widget-create 'checkbox nil))
     (widget-insert "\nRun asynchronously (experimental) ")
     (setq-local elgrep-w-async (elgrep-widget-create 'checkbox nil))
     (setq-local elgrep-w-mindepth (elgrep-widget-create 'number :format "\nMinimal recursion depth: %v" 0))
     (setq-local elgrep-w-maxdepth (elgrep-widget-create 'number :format "Maximal recursion depth: %v" most-positive-fixnum))
+    (setq-local elgrep-w-r-beg (elgrep-widget-create 'elgrep-record-widget :tag "Beginning of Record" :value #'point-min))
+    (setq-local elgrep-w-r-end (elgrep-widget-create 'elgrep-record-widget :tag "End of Record" :value #'point-max))
     (setq-local elgrep-w-c-beg (elgrep-widget-create 'elgrep-context-widget :tag "Context Lines Before The Match"))
     (setq-local elgrep-w-c-end (elgrep-widget-create 'elgrep-context-widget :tag "Context Lines After The Match"))
     (setq-local elgrep-w-case-fold-search
@@ -980,7 +1037,9 @@ Otherwise a new elgrep call is added."))
 						  :value elgrep-call-list))
     (widget-setup)
     (set-window-start (selected-window) (point-min))
-    (goto-char (widget-field-start elgrep-w-re))
+    (when-let ((choice (car (widget-get elgrep-w-re :children)))
+	       (re (or (car-safe (widget-get choice :children)) choice)))
+      (goto-char (widget-field-start re)))
     (buffer-enable-undo)))
 
 (defun elgrep-get-formatter ()
@@ -1109,6 +1168,36 @@ Run BODY like `progn'."
        ,@body
        )))
 
+(defun elgrep--search-forward (search)
+  "Search for SEARCH.
+If SEARCH is a regexp then search with `re-search-forward'.
+If it is a function call that function without args.
+It should return the position of the match if it finds one.
+Otherwise emit error."
+  (cond
+   ((functionp search)
+    (funcall search))
+   ((stringp search)
+    (re-search-forward search nil 'noError))
+   (t
+    (user-error "Search expression %S is neither a regexp nor a function" search))))
+
+(defmacro elgrep-with-records (r-beg r-end &rest body)
+  "Restrict buffer to region R-BEG R-END and execute BODY."
+  (declare (indent 2) (debug (sexp sexp body)))
+  (let ((b (make-symbol "b"))
+	(e (make-symbol "e")))
+    `(while
+	 (when-let ((,b (elgrep--search-forward ,r-beg))
+		    (,e (elgrep--search-forward ,r-end)))
+	   (narrow-to-region ,b ,e)
+	   (goto-char ,b)
+	   (save-restriction
+	     ,@body)
+	   (widen)
+	   (goto-char ,e)
+	   (< ,e (point-max))))))
+
 (defun elgrep-intern-plist-keys (plist)
   "Intern all string keys of PLIST that are given.
 Keys given as symbols are not touched.
@@ -1144,15 +1233,35 @@ of the last visited buffer
 :interactive
 t: call as interactive
 
+:r-beg record begin
+Beginning of next record.
+Can be a regular expression or a function without args.
+If the function finds a record beginning it should return its position
+like `search-forward'.
+Search starts at buffer beginning or at end of last recurd.
+Defaults to `point-min'.
+
+:r-end record end
+End of record.
+Can be a regular expression or a function without args.
+If the function finds a record end it should return its position
+like `search-forward'.
+Search starts at search result for :r-beg.
+Defaults to `point-max'.
+
 :c-beg context begin (line beginning)
 Lines before match defaults to 0. Can also be a regular expression.
 Then this re is searched for in backward-direction
 starting at the current elgrep-match.
+It can also be a function moving point to the context beginning
+starting at the match of RE.
 
 :c-end context end (line end)
 Lines behind match defaults to 0
 Then this re is searched for in forward-direction
 starting at the current elgrep-match.
+It can also be a function moving point to the context end
+starting at the match of :c-beg.
 
 :c-op
 Context operation gets beginning and end position of context as arguments.
@@ -1239,25 +1348,73 @@ Asynchronous search (experimental).
     (if (plist-get options :async)
 	(async-start
 	 `(lambda ()
+	    (package-initialize)
+	    (setq elgrep-data-file nil)
 	    (load-library ,elgrep-path)
 	    (cons
-	     (apply #'elgrep-search ,dir ,file-name-re ,re '(,@options))
+	     (apply #'elgrep-search ,dir ,file-name-re (quote ,re) '(,@options))
 	     (and (buffer-live-p elgrep-log-buffer)
 		  (with-current-buffer
 		      elgrep-log-buffer
 		    (buffer-string)))))
 	 `(lambda (filematches-and-log)
-	    (apply #'elgrep-show (car filematches-and-log) ,dir ,file-name-re ,re '(,@options))
+	    (apply #'elgrep-show (car filematches-and-log) ,dir ,file-name-re (quote ,re) '(,@options))
 	    (elgrep-reset-start-button ,(plist-get options :elgrep-menu))
 	    (when (stringp (cdr filematches-and-log))
 	      (elgrep-log "%s" (cdr filematches-and-log)))))
       (apply #'elgrep-show (apply #'elgrep-search dir file-name-re re options)
 	     dir file-name-re re options))))
 
+(defun elgrep-required-matches (fun req)
+  "Return t when we find each required match from REQ by FUN.
+Thereby REQ is a list of matchers.
+FUN is a function with the same args as `re-search-forward'.
+Each matcher is a predicate function or a regexp.
+
+Moves point to `point-min'
+to prepare the buffer for the actual search
+when all requirements are fulfilled."
+  (catch :failed
+    (dolist (re req)
+      (goto-char (point-min))
+      (cond
+       ((functionp re)
+	(unless (funcall re)
+	  (throw :failed nil)))
+       ((stringp re)
+	(let* ((neg (if	(eq (string-to-char re) elgrep-negating-char)
+			(progn
+			  (setq re (substring re 1))
+			  t)
+		      (when (string-match (string ?\\ elgrep-negating-char) re)
+			(setq re (substring re 1)))
+		      nil))
+	       (matching (and (funcall fun re nil 'noError) t)))
+	  (when (equal neg matching)
+	    (throw :failed nil))
+	  ))
+       (t
+	(error "Entry of required matches is neither a function nor a string"))
+       ))
+    (goto-char (point-min))
+    t))
+
+(defmacro elgrep-with-wide-buffer (&rest body)
+  "Save restriction, widen buffer, and eval BODY."
+  (declare (debug body))
+  `(save-restriction
+     (widen)
+     ,@body))
+
 (defun elgrep-search (dir file-name-re re &rest options)
   "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
 This is done via Emacs Lisp (no dependence on external grep).
 Return list of filematches.
+
+RE may be a list of regular expressions.
+In that case each file is searched for all occurences
+of the first regular expression if each of the other
+regular expressions occur at least once in the file.
 
 Each filematch is a cons (file . matchdata).
 file is the file name.
@@ -1285,6 +1442,8 @@ See `elgrep' for the valid options in plist OPTIONS."
 	  (c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
 	  (exclude-file-re (plist-get options :exclude-file-re))
 	  (case-fold-search (plist-get options :case-fold-search))
+	  (r-beg (or (plist-get options :r-beg) #'point-min))
+	  (r-end (or (plist-get options :r-end) #'point-max))
           (search-fun (or (plist-get options :search-fun) #'re-search-forward))
 	  (file-fun (plist-get options :file-fun)))
       (when (and exclude-file-re (null (string-equal exclude-file-re "")))
@@ -1301,58 +1460,70 @@ See `elgrep' for the valid options in plist OPTIONS."
 		  (>= depth mindepth))
 	 (if re
 	     (elgrep-prepare-buffer file dir options
-	       (let (filematch
-		     (last-line-number 1)
-		     (last-pos (point-min)))
-		 (goto-char (point-min))
-		 (while (funcall search-fun re nil t)
-		   (when-let* ((n (/ (length (match-data)) 2))
-			       (context-beginning
-				(save-excursion
-				  (goto-char (match-beginning 0))
-				  (elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
-			       (context-end
-				(save-excursion
-				  (goto-char context-beginning)
-				  (elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
-			       (matchdata (and
-					   (<= (match-end 0) context-end)
-					   (cl-loop
-					    for i from 0 below n
-					    collect
-					    (list :match (match-string-no-properties i)
-						  :context (funcall c-op context-beginning context-end)
-						  :line (prog1
-							    (setq last-line-number
-								  (+ last-line-number
-								     (count-lines last-pos (line-beginning-position))))
-							  (setq last-pos (line-beginning-position)))
-						  :context-beg context-beginning
-						  :context-end context-end
-						  :beg (match-beginning i)
-						  :end (match-end i))))))
-		     (setq filematch (cons matchdata filematch))))
-		 (when filematch
-		   (setq filematches (cons (cons file (nreverse filematch)) filematches)))))
+	       (let ((last-pos (point-min))
+		     (last-line-number 1))
+		 (elgrep-with-records r-beg r-end
+		   (let (filematch
+			 (required-matches (cdr-safe re))
+			 (re-str (or (car-safe re)
+				     re))
+			 pos-found)
+		     (when (elgrep-required-matches search-fun required-matches)
+		       (while (or (setq pos-found (funcall search-fun re-str nil 'noError))
+				  (null (eobp)))
+			 (when-let* (pos-found
+				     (n (/ (length (match-data)) 2))
+				     (context-beginning
+				      (save-excursion
+					(goto-char (match-beginning 0))
+					(elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
+				     (context-end
+				      (save-excursion
+					(goto-char context-beginning)
+					(elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
+				     (matchdata (and
+						 (<= (match-end 0) context-end)
+						 (cl-loop
+						  for i from 0 below n
+						  collect
+						  (list :match (match-string-no-properties i)
+							:context (funcall c-op context-beginning context-end)
+							:line (elgrep-with-wide-buffer
+							       (setq last-line-number
+								     (+ last-line-number
+									(count-lines last-pos (line-beginning-position))))
+							       (setq last-pos (line-beginning-position))
+							       last-line-number)
+							:context-beg context-beginning
+							:context-end context-end
+							:beg (match-beginning i)
+							:end (match-end i))))))
+			   (setq filematch (cons matchdata filematch)))))
+		     (when filematch
+		       (setq filematches (cons (cons file (nreverse filematch)) filematches)))))))
 	   ;; no re given; just register file with dummy matchdata
 	   (setq filematches (cons (list file) filematches)))))
       (setq filematches (nreverse filematches))
       (when (and (plist-get options :recursive)
 		 (< depth maxdepth))
-	(setq files (cl-loop for file in (elgrep-directory-files dir)
-			     if (and (or (file-accessible-directory-p (expand-file-name file dir))
-					 (progn (elgrep-log "Directory %S not accessible\n")
-						nil))
-				     (let ((dir-re (plist-get options :dir-re))
-					   (exclude-dir-re (plist-get options :exclude-dir-re)))
-				       (and (or (null dir-re)
-						(string-match dir-re file))
-					    (null
-					     (and exclude-dir-re
-						  (null (string-equal exclude-dir-re ""))
-						  (string-match exclude-dir-re file)))))
-				     (null (string-match "^\\.[.]?\\'" file)))
-			     collect file))
+	(setq files (cl-loop
+		     with path
+		     for file in (elgrep-directory-files dir)
+		     if (and
+			 (file-directory-p (setq path (expand-file-name file dir)))
+			 (or (file-accessible-directory-p path)
+			     (progn (elgrep-log "Directory %S not accessible\n")
+				    nil))
+			 (let ((dir-re (plist-get options :dir-re))
+			       (exclude-dir-re (plist-get options :exclude-dir-re)))
+			   (and (or (null dir-re)
+				    (string-match dir-re file))
+				(null
+				 (and exclude-dir-re
+				      (null (string-equal exclude-dir-re ""))
+				      (string-match exclude-dir-re file)))))
+			 (null (string-match "^\\.[.]?\\'" file)))
+		     collect file))
 	(let ((deep-options (plist-put (cl-copy-list options) :depth (1+ depth))))
 	  (dolist (file files)
 	    (setq filematches
@@ -1584,6 +1755,19 @@ When it is switched off it should restore the old header line which is preserved
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helpers for defining search expressions
 
+(defun elgrep/point-min ()
+  "Move point to `point-min' and return point."
+  (goto-char (point-min)))
+
+(defun elgrep/point-max ()
+  "Move point to `point-max' and return point."
+  (goto-char (point-max)))
+
+(defun elgrep/forward-sexp ()
+  "Move point forward one sexp and return point."
+  (forward-sexp)
+  (point))
+
 (defun elgrep/process-options (option-defaults body)
   "Process plist of OPTION-DEFAULTS occuring at start of BODY.
 The keys in OPTION-DEFAULTS are also the potential option keys in BODY.
@@ -1594,12 +1778,12 @@ The recommended way for processing options is:
 \(cl-destructuring-bind (OPTIONS BODY) (filesTZA-process-options OPTIONS-DEFAULTS BODY) ...)."
   (setq option-defaults (cl-copy-list option-defaults))
   (while
-	(cl-loop for opt on option-defaults by #'cddr
-		 when (eq (car body) (car opt))
-		 do (setf (cadr opt) (cadr body)
-			  body (cddr body))
-		 and return t
-		 finally return nil))
+      (cl-loop for opt on option-defaults by #'cddr
+	       when (eq (car body) (car opt))
+	       do (setf (cadr opt) (cadr body)
+			body (cddr body))
+	       and return t
+	       finally return nil))
   (list option-defaults body))
 
 (defmacro elgrep/with-current-file (filename &rest body)
