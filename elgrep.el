@@ -1187,16 +1187,22 @@ Otherwise emit error."
   (declare (indent 2) (debug (sexp sexp body)))
   (let ((b (make-symbol "b"))
 	(e (make-symbol "e")))
-    `(while
-	 (when-let ((,b (elgrep--search-forward ,r-beg))
-		    (,e (elgrep--search-forward ,r-end)))
-	   (narrow-to-region ,b ,e)
-	   (goto-char ,b)
-	   (save-restriction
-	     ,@body)
-	   (widen)
-	   (goto-char ,e)
-	   (< ,e (point-max))))))
+    `(let (,b (,e (1- (point-min))))
+       (while
+	   (when (and (setq ,b (elgrep--search-forward ,r-beg))
+		      (setq ,b (if (< ,e ,b) ;; Search for r-beg:"^" and r-end:"$" in "\n\n"
+				   ,b        ;; finds the same position.
+				 (and (< ,e (point-max))
+				      (goto-char (1+ ,e))
+				      (elgrep--search-forward ,r-beg)))))
+	     (setq ,e (elgrep--search-forward ,r-end))
+	     (narrow-to-region ,b ,e)
+	     (goto-char ,b)
+	     (save-restriction
+	       ,@body)
+	     (widen)
+	     (goto-char ,e)
+	     (< ,e (point-max)))))))
 
 (defun elgrep-intern-plist-keys (plist)
   "Intern all string keys of PLIST that are given.
