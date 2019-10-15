@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2015  Tobias Zawada
 
-;; Author: Tobias Zawada <naehring@smtp.1und1.de>
+;; Author: Tobias Zawada <i@tn-home.de>
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1.0.0
 ;; URL: https://github.com/TobiasZawada/elgrep
