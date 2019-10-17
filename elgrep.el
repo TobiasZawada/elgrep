@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2015  Tobias Zawada
 
-;; Author: Tobias Zawada <i@tn-home.de>
+;; Author: Tobias Zawada <naehring@smtp.1und1.de>
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1.0.0
 ;; URL: https://github.com/TobiasZawada/elgrep
@@ -1473,10 +1473,12 @@ See `elgrep' for the valid options in plist OPTIONS."
 			 (required-matches (cdr-safe re))
 			 (re-str (or (car-safe re)
 				     re))
+			 (point-prev (point-min))
 			 pos-found)
 		     (when (elgrep-required-matches search-fun required-matches)
 		       (while (or (setq pos-found (funcall search-fun re-str nil 'noError))
-				  (null (eobp)))
+				  (null (or (eq point-prev (setq point-prev (point)))
+					    (eobp))))
 			 (when-let* (pos-found
 				     (n (/ (length (match-data)) 2))
 				     (context-beginning
@@ -1991,6 +1993,34 @@ Search for BibTeX entries matching KEY-VAL-LIST."
      return (if keyvals nil
 	      (set-match-data (list (car found) (cdr found) (current-buffer)))
 	      (goto-char (cdr found))))))
+
+(defun elgrep/comment-p ()
+  "Return non-nil if point is in a comment.
+Does not move point and does not change `match-data'."
+  (save-excursion
+    (save-match-data
+      (comment-beginning))))
+
+(defun elgrep/outside-comment-p ()
+  "Return t if point is outside any comment."
+  (null (elgrep/comment-p)))
+
+(defun elgrep/re-search-comments (&rest args)
+  "Search for regexp within comments.
+The ARGS are the same as for `re-search-forward'.
+
+\(fn REGEXP &optional BOUND NOERROR COUNT)"
+  (let ((ret (apply #'re-search-forward args)))
+    (and (elgrep/comment-p) ret)))
+
+(defun elgrep/re-search-outside-comments (&rest args)
+  "Search for regexp outside comments.
+The ARGS are the same as for `re-search-forward'.
+
+\(fn REGEXP &optional BOUND NOERROR COUNT)"
+  (let ((ret (apply #'re-search-forward args)))
+    (and (elgrep/outside-comment-p) ret)))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
