@@ -30,6 +30,7 @@ regular expression. With prefix arg <kbd>C-u</kbd> it searches the directory
 recursively.
 ### Advanced Search
 Elgrep can do much more for you than the simple search described in the previous section.
+
 List of all menu items of `elgrep-menu`:
 
 - **Expression**: You can change Expression from "regexp" to "List of regexps". In that list you can insert and delete entries.
@@ -62,3 +63,53 @@ List of all menu items of `elgrep-menu`:
 - **Buffer Initialization**: Before the expression search starts the file contents is load into a buffer `< *elgrep-search*>`. By default the buffer contents is treated as simple text without special text syntax and properties. If you use syntax dependent functions like `forward-sexp` you should probably initialize the buffer with the syntax table for the file type or even with a full major-mode initialization.
 - **File Predicate Function**: Predicate function called with the absolute file path as argument. The function should return non-nil if that file should be searched.
 - **Search Function**: Function to search forward for occurences of the expression (maybe a regexp or a list of regexps) called with the same arguments as `re-search-forward`. On a positive match it should place point and set the match data like `re-search-forward` does. Thereby it is not required that RE is a regular expression. It defaults to `re-search-forward'.
+
+### Examples
+
+#### Searching a BibTeX database
+
+The library [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) for searching Combined EXPressions composed of regular expressions and balanced expressions works well together with Elgrep.
+
+The [github directory of Elgrep](https://github.com/TobiasZawada/elgrep) contains a directory [elgrepTest](https://github.com/TobiasZawada/elgrep/elgrepTest) with bibtex files in subdirectories.
+
+To search the bibtex files for publications by Stallman that do not contain `emacs` in the title use the following settings:
+```
+Expression: List of regexps:
+[INS] [DEL] Regexp: ^ *author *= *\!(\<stallman\>\!)
+[INS] [DEL] Regexp: !^ *title *= *\!(\<emacs\>\!)
+Directory: ~/KB/Soft/Emacs/elgrepTest
+File Name Regular Expression: \.bib\'
+Recurse into subdirectories [X]
+Run asynchronously (experimental): ( ) Separate instance of Emacs	(*) Separate thread	( ) Synchronous
+Beginning of Record: Regexp: ^@[[:alpha:]]+
+End of Record: Function: elgrep/forward-sexp
+Context Lines Before The Match: Function: elgrep/point-min
+Context Lines After The Match: Function: elgrep/point-max
+Buffer initialization: [Options] Set syntax table
+Search function: cexp-search-forward
+```
+The Elgrep search returns an `<*elgrep*>` buffer with the following contents:
+```
+-*- mode: elgrep; default-directory: "/mnt/c/Users/Tobias.Zawada/KB/Soft/Emacs/elgrepTest" -*-
+TwoFirstLevel/21SecondLevel/lit2.bib:71:{StallmanWhyOpenSourceMissesThePointOfFreeSoftware,
+  author="Richard M. Stallman",
+  title={Why Open Source misses the point of Free Software},
+  year=2019,
+  month={Feb},
+  url="https://www.gnu.org/philosophy/open-source-misses-the-point.html.en",
+  language = english
+}
+TwoFirstLevel/testLit.bib:40:{stallman99:telepolis,
+  AUTHOR       = "Stallman, Richard Matthew and Krempl, Stefan",
+  TITLE        = "{S}oftware mu{\ss} frei sein!",
+  YEAR         = "1999",
+  HOWPUBLISHED = "Website",
+  NOTE         = "Online erhältlich unter
+                  \url{http://www.heise.de/tp/deutsch/inhalt/te/2860/1.html};
+                  abgerufen am 8. Januar 2005.",
+  LANGUAGE     = ngerman
+}
+```
+The result of the Elgrep search as an image:
+
+![Result of Elgrep search for BibTeX entries](elgrepTest/elgrepBibTeX.png)
