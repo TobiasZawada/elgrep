@@ -79,7 +79,6 @@ Expression: List of regexps:
 Directory: ~/KB/Soft/Emacs/elgrepTest
 File Name Regular Expression: \.bib\'
 Recurse into subdirectories [X]
-Run asynchronously (experimental): ( ) Separate instance of Emacs	(*) Separate thread	( ) Synchronous
 Beginning of Record: Regexp: ^@[[:alpha:]]+
 End of Record: Function: elgrep/forward-sexp
 Context Lines Before The Match: Function: elgrep/point-min
