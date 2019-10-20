@@ -49,16 +49,20 @@ List of all menu items of `elgrep-menu`:
   - Synchronous: That is the safest but also the inconvenient mode. It freezes Emacs as long as it searches for all matches. Sometimes that may take a while. You can interrupt that search by Quit (<kbd>C-g</kbd>) but then you do not get search results.
 - **Minimal recursion depth**: The specified Directory (see above) is recursion level 0. Here you can instruct Elgrep to only search subdirectories with a given minimal depths below level 0.
 - **Maximal recursion depth**: Here you can limit the maximal recursion depth. See the previous option.
-- **Beginning of Record**: You can delimit the search to parts of files which we call **records**. The beginning and the end of the records can be defined by regular expressions or by Elisp functions. The buffer is narrowed to the record during the expression search.  
+- **Beginning of Record**: You can delimit the search to parts of files which we call **records**. The beginning and the end of the records can be defined by regular expressions, Elisp functions, or Elisp expressions. The buffer is narrowed to the record during the expression search.  
   Elgrep can sequentially search multiple records in one file. So you can built up simple queries textual databases with Elgrep.  
   The default setting is the function `point-min` for the beginning of the record and `point-max` for the end of the record. That means that the whole file is one record. With that default setting Elgrep works like the usual grep command finding all occurences of the Expression in the file.  
   In general the functions given as beginning and end of a record is called without arguments and should return buffer positions. The end position must be at or behind the beginning position. The search for the beginning of the next record starts at the end of the current one.  
   An example for useful regular expressions are for the record beginning the empty string matching the line beginning `^` and for the record end the regular expression matching the empty string at the line end `$`. With this combination each line of the file is one record. (Note, that empty lines are empty records.) That makes especially sense if the search expression is a list of regular expressions where one record must fulfill multiple requirements. For an instance one string must occur on a matching line but another string may not occur on that line.
 - **End of Record**: See previous item.
-- **Context Lines Before the Match**: While the record delimiters bound the search the context lines determine how many lines before and after the match are output in the `<*elgrep*>` result buffer. The input can be a number, a regexp, or a function:
+- **Context Lines Before the Match**: While the record delimiters bound the search the context lines determine how many lines before and after the match are output in the `<*elgrep*>` result buffer. The input can be a number, a regexp, an Elisp function, or a Elisp expression:
   - Number: Output that many lines before the match. The default value 0 limits the output of to the line with the match.
   - Regular expression: Elgrep searches backward starting at the Expression match. It starts the output at the line with the match for the beginning of the context.
-  - Function: That function is called with no arguments and should put point on the line starting the context.
+  - Elisp Function: That function is called with no arguments and should put point on the line starting the context.
+  - Elisp Expression: That expression is evaluated with `eval`. Example:  
+    `(elgrep/re-search-goto-match-beginning "^[[:space:]]*#\\+begin_src[[:space:]]+emacs-lisp" nil 'noErr)`  
+    Thereby, `elgrep/re-search-goto-match-beginning` is one of the utility functions for the user provided by Elgrep.
+    Just call the completion for the help on function argument via <kbd>C-h f</kbd> `elgrep/` <kbd>&lt;TAB&gt;</kbd> to see the full list.
 - **Case Sensitivity**: Determines whether the expression search is case sensitive. The default setting takes the value of the variable `case-fold-search`.
 - **Buffer Initialization**: Before the expression search starts the file contents is load into a buffer `< *elgrep-search*>`. By default the buffer contents is treated as simple text without special text syntax and properties. If you use syntax dependent functions like `forward-sexp` you should probably initialize the buffer with the syntax table for the file type or even with a full major-mode initialization.
 - **File Predicate Function**: Predicate function called with the absolute file path as argument. The function should return non-nil if that file should be searched.
@@ -111,3 +115,27 @@ The Elgrep search returns an `<*elgrep*>` buffer with the following contents:
 The result of the Elgrep search as an image:
 
 ![Result of Elgrep search for BibTeX entries](elgrepTest/elgrepBibTeX.png)
+
+You may have noticed that the BibTeX keywords for the publication types of the entries are not printed in the Elgrep results.
+That is because the publication type is part of the match for the regular expression matching the beginning of the record and by default the record starts behind the match.
+You can include the match if you move point to the beginning of the match after the regexp search for the beginning of the record.
+If you do that you must also start the search for the 
+You can do so by replacing the settings
+```
+Beginning of Record: Regexp: ^@[[:alpha:]]+
+End of Record: Function or Elisp Form: elgrep/forward-sexp
+```
+with the following
+```
+Beginning of Record: Function or Elisp Form: (and (re-search-forward "^@[[:alpha:]]+" nil 'noErr) (goto-char (match-beginning 0)))
+End of Record: Function or Elisp Form: (progn (goto-char (match-end 0)) (elgrep/forward-sexp))
+```
+or equivalently by using Elgrep utility functions:
+```
+Beginning of Record: Function or Elisp Form: (elgrep/re-search-goto-match-beginning "^@[[:alpha:]]+" nil 'noErr)
+End of Record: Function or Elisp Form: elgrep/forward-sexp-at-match-end
+```
+
+With these modified settings the publication types are included in the Elgrep results:
+
+![Elgrep search for BibTeX entries with publication types](elgrepTest/elgrepBibTeXWithPubTypes.png)
