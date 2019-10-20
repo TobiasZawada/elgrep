@@ -54,6 +54,8 @@
 ;;   of `elgrep'.
 ;; - Correct handling of `elgrep-data-file' such that asynchronous
 ;;   calls of recursive elgrep work again.
+;; 2019-10-20:
+;; - Allow lisp forms as c-beg, c-end, r-beg, and r-end.
 ;;; Code:
 
 (require 'widget)
@@ -192,7 +194,10 @@ Default action is (POS-OP)."
 	 (when (funcall ,limiter)
 	   (,pos-op)))))
     (t
-     (,pos-op))))
+     (save-excursion
+       (save-match-data
+	 (when (eval ,limiter)
+	   (,pos-op)))))))
 
 (defun elgrep-classify (classifier list &rest options)
   "Use CLASSIFIER to map the LIST entries to class denotators.
@@ -281,13 +286,15 @@ Comparison done with `equal'."
 (defun elgrep-menu-record-p (rec)
   "Check whether REC is an admissible value for `elgrep-w-r-beg'."
   (or (stringp rec)
-      (functionp rec)))
+      (functionp rec)
+      (listp rec)))
 
 (defun elgrep-menu-context-p (ctxt)
   "Check whether CTXT is an admissible value for `elgrep-w-c-beg'."
   (or (integerp ctxt)
       (stringp ctxt)
-      (functionp ctxt)))
+      (functionp ctxt)
+      (listp ctxt)))
 
 (defun elgrep-menu-async-p (async)
   "Check whether ASYNC is admissible for `elgrep-w-async'."
@@ -545,16 +552,31 @@ If the value of OLD is nil no old widget is deleted."
   :format "%t: %v"
   "")
 
+(defun elgrep-widget-elisp-completions (widget)
+  "Run like `widget-default-completions' on WIDGET."
+  (let ((b (widget-field-start widget)))
+    (if (save-excursion
+	  (goto-char b)
+	  (looking-at-p "[[:space:]]*("))
+	(elisp-completion-at-point)
+      (list b (point) obarray
+	    :predicate #'fboundp))))
+
+(define-widget 'elgrep-elisp-widget 'sexp
+  "Widget for elisp input as function or lisp form."
+  :tag "Function or Elisp Form"
+  :completions-function #'elgrep-widget-elisp-completions)
+
 (define-widget 'elgrep-record-widget 'menu-choice
   "Widget type for `elgrep-w-r-beg' and `elgrep-w-r-end'."
   :args '((regexp :tag "Regexp")
-	  (function :tag "Function")))
+	  (elgrep-elisp-widget)))
 
 (define-widget 'elgrep-context-widget 'menu-choice
   "Widget type for `elgrep-w-c-beg' and `elgrep-w-c-end'."
   :value 0 :args '((number :tag "Number of Lines")
 		   (regexp :tag "Regexp")
-		   (function :tag "Function")))
+		   (elgrep-elisp-widget)))
 
 (defun elgrep-button-help-echo (wid)
   "Return help echo for button widget WID."
@@ -1006,12 +1028,12 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
     (widget-insert  "Recurse into subdirectories ")
     (setq-local elgrep-w-recursive (elgrep-widget-create 'checkbox nil))
     (setq-local elgrep-w-async (elgrep-widget-create
-				'(radio-button-choice :tag "\nRun asynchronously (experimental)" :format "%t: %v"
+				'(radio-button-choice :tag "\nRun Asynchronously (experimental)" :format "%t: %v"
 					 (const :tag "Separate instance of Emacs" :format "%t\t" t)
 					 (const :tag "Separate thread" :format "%t\t" thread)
 					 (const :tag "Synchronous" nil))))
-    (setq-local elgrep-w-mindepth (elgrep-widget-create 'number :format "Minimal recursion depth: %v" 0))
-    (setq-local elgrep-w-maxdepth (elgrep-widget-create 'number :format "Maximal recursion depth: %v" most-positive-fixnum))
+    (setq-local elgrep-w-mindepth (elgrep-widget-create 'number :format "Minimal Recursion Depth: %v" 0))
+    (setq-local elgrep-w-maxdepth (elgrep-widget-create 'number :format "Maximal Recursion Depth: %v" most-positive-fixnum))
     (setq-local elgrep-w-r-beg (elgrep-widget-create 'elgrep-record-widget :tag "Beginning of Record" :value #'point-min))
     (setq-local elgrep-w-r-end (elgrep-widget-create 'elgrep-record-widget :tag "End of Record" :value #'point-max))
     (setq-local elgrep-w-c-beg (elgrep-widget-create 'elgrep-context-widget :tag "Context Lines Before The Match"))
@@ -1196,8 +1218,7 @@ Otherwise emit error."
     (funcall search))
    ((stringp search)
     (re-search-forward search nil 'noError))
-   (t
-    (user-error "Search expression %S is neither a regexp nor a function" search))))
+   (t (eval search))))
 
 (defmacro elgrep-with-records (r-beg r-end &rest body)
   "Restrict buffer to region R-BEG R-END and execute BODY."
@@ -1806,6 +1827,31 @@ When it is switched off it should restore the old header line which is preserved
 (defalias 'elgrep-edit #'elgrep-edit-mode)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Handling the data file:
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun elgrep-load-elgrep-data-file ()
+  "Load the `elgrep-data-file'."
+  (interactive)
+  (when (stringp elgrep-data-file)
+    (let ((file (expand-file-name elgrep-data-file user-emacs-directory)))
+      (load file t nil t))))
+
+(elgrep-load-elgrep-data-file)
+
+(defun elgrep-save-elgrep-data-file ()
+  "Save the elgrep data file if `elgrep-data-file' is a string.
+This can be used as `kill-emacs-hook'."
+  (interactive)
+  (when (stringp elgrep-data-file)
+    (with-temp-buffer
+      (insert (format "%S" `(setq elgrep-call-list (quote ,elgrep-call-list))))
+      (write-file
+       (expand-file-name elgrep-data-file user-emacs-directory)))))
+
+(add-hook 'kill-emacs-hook #'elgrep-save-elgrep-data-file)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Helpers for defining search expressions
 
 (defun elgrep/point-min ()
@@ -1819,6 +1865,11 @@ When it is switched off it should restore the old header line which is preserved
 (defun elgrep/forward-sexp ()
   "Move point forward one sexp and return point."
   (forward-sexp)
+  (point))
+
+(defun elgrep/up-list ()
+  "Move point out of current list and return point."
+  (up-list)
   (point))
 
 (defun elgrep/process-options (option-defaults body)
@@ -2054,17 +2105,36 @@ Does not move point and does not change `match-data'."
   "Search for regexp within comments.
 The ARGS are the same as for `re-search-forward'.
 
+If a match for REGEXP is found outside comments
+put point behind the match but return nil.
+
 \(fn REGEXP &optional BOUND NOERROR COUNT)"
   (let ((ret (apply #'re-search-forward args)))
     (and (elgrep/comment-p) ret)))
 
 (defun elgrep/re-search-outside-comments (&rest args)
-  "Search for regexp outside comments.
+  "Search for REGEXP outside comments.
 The ARGS are the same as for `re-search-forward'.
+
+If a match for REGEXP is found within a comment put point
+at the end of the match but return nil.
 
 \(fn REGEXP &optional BOUND NOERROR COUNT)"
   (let ((ret (apply #'re-search-forward args)))
     (and (elgrep/outside-comment-p) ret)))
+
+(defun elgrep/re-search-goto-match-beginning (&rest args)
+  "Search for regexp like `re-search-forward' but goto beginning of match.
+The ARGS are the same as for `re-search-forward'.
+
+\(fn REGEXP &optional BOUND NOERROR COUNT)"
+  (and (apply #'re-search-forward args) (goto-char (match-beginning 0))))
+
+(defun elgrep/forward-sexp-at-match-end ()
+  "Go to the end of the last match and forward one sexp."
+  (goto-char (match-end 0))
+  (forward-sexp)
+  (point))
 
 (defmacro elgrep/m (&rest args)
   "Call `elgrep' with unevaluated ARGS."
@@ -2076,27 +2146,6 @@ The interactive call is accomplished by appending (:interactive t) to ARGS."
   `(apply #'elgrep '(,@args :interactive t)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defun elgrep-load-elgrep-data-file ()
-  "Load the `elgrep-data-file'."
-  (interactive)
-  (when (stringp elgrep-data-file)
-    (let ((file (expand-file-name elgrep-data-file user-emacs-directory)))
-      (load file t nil t))))
-
-(elgrep-load-elgrep-data-file)
-
-(defun elgrep-save-elgrep-data-file ()
-  "Save the elgrep data file if `elgrep-data-file' is a string.
-This can be used as `kill-emacs-hook'."
-  (interactive)
-  (when (stringp elgrep-data-file)
-    (with-temp-buffer
-      (insert (format "%S" `(setq elgrep-call-list (quote ,elgrep-call-list))))
-      (write-file
-       (expand-file-name elgrep-data-file user-emacs-directory)))))
-
-(add-hook 'kill-emacs-hook #'elgrep-save-elgrep-data-file)
 
 (provide 'elgrep)
 ;;; elgrep.el ends here
