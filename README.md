@@ -119,13 +119,13 @@ The result of the Elgrep search as an image:
 You may have noticed that the BibTeX keywords for the publication types of the entries are not printed in the Elgrep results.
 That is because the publication type is part of the match for the regular expression matching the beginning of the record and by default the record starts behind the match.
 You can include the match if you move point to the beginning of the match after the regexp search for the beginning of the record.
-If you do that you must also start the search for the 
+If you do that you must also start the search for the end of the record at the end of the match for the beginning of the record.
 You can do so by replacing the settings
 ```
 Beginning of Record: Regexp: ^@[[:alpha:]]+
 End of Record: Function or Elisp Form: elgrep/forward-sexp
 ```
-with the following
+with the following ones:
 ```
 Beginning of Record: Function or Elisp Form: (and (re-search-forward "^@[[:alpha:]]+" nil 'noErr) (goto-char (match-beginning 0)))
 End of Record: Function or Elisp Form: (progn (goto-char (match-end 0)) (elgrep/forward-sexp))
