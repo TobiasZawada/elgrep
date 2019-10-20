@@ -89,7 +89,7 @@ Search function: cexp-search-forward
 The Elgrep search returns an `<*elgrep*>` buffer with the following contents:
 ```
 -*- mode: elgrep; default-directory: "/mnt/c/Users/Tobias.Zawada/KB/Soft/Emacs/elgrepTest" -*-
-TwoFirstLevel/21SecondLevel/lit2.bib:71:{StallmanWhyOpenSourceMissesThePointOfFreeSoftware,
+2FirstLevel/21SecondLevel/lit2.bib:71:{StallmanWhyOpenSourceMissesThePointOfFreeSoftware,
   author="Richard M. Stallman",
   title={Why Open Source misses the point of Free Software},
   year=2019,
@@ -97,7 +97,7 @@ TwoFirstLevel/21SecondLevel/lit2.bib:71:{StallmanWhyOpenSourceMissesThePointOfFr
   url="https://www.gnu.org/philosophy/open-source-misses-the-point.html.en",
   language = english
 }
-TwoFirstLevel/testLit.bib:40:{stallman99:telepolis,
+2FirstLevel/testLit.bib:40:{stallman99:telepolis,
   AUTHOR       = "Stallman, Richard Matthew and Krempl, Stefan",
   TITLE        = "{S}oftware mu{\ss} frei sein!",
   YEAR         = "1999",
