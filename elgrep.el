@@ -347,7 +347,8 @@ such as `elgrep-w-start'.")
      (nreverse ret))))
 
 (defvar-local elgrep-thread nil
-  "")
+  "Thread of the elgrep call with :async option 'thread.
+Normally bound in the `elgrep-menu' buffer.")
 
 (defun elgrep-menu-stop (&rest _ignore)
   "Stop elgrep process of current buffer.
@@ -1536,10 +1537,15 @@ See `elgrep' for the valid options in plist OPTIONS."
 			 (required-matches (cdr-safe re))
 			 (re-str (or (car-safe re)
 				     re))
-			 (point-prev (point-min))
+			 (point-prev 0)
 			 pos-found)
 		     (when (elgrep-required-matches search-fun required-matches)
-		       (while (or (setq pos-found (funcall search-fun re-str nil 'noError))
+		       (while (or (and
+				   (setq pos-found (funcall search-fun re-str nil 'noError))
+				   (or (< point-prev (setq point-prev (point)))
+				       (progn
+					 (setq pos-found nil)
+					 (goto-char (1+ point-prev)))))
 				  (null (or (eq point-prev (setq point-prev (point)))
 					    (eobp))))
 			 (thread-yield)
