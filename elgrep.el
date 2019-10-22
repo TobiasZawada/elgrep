@@ -6,7 +6,7 @@
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1.0.0
 ;; URL: https://github.com/TobiasZawada/elgrep
-;; Package-Requires: ((emacs "25.1") (async "1.5"))
+;; Package-Requires: ((emacs "26.1") (async "1.5"))
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -1208,18 +1208,31 @@ Run BODY like `progn'."
        ,@body
        )))
 
-(defun elgrep--search-forward (search)
+(defun elgrep--search-forward (search &optional match-beg)
   "Search for SEARCH.
 If SEARCH is a regexp then search with `re-search-forward'.
 If it is a function call that function without args.
 It should return the position of the match if it finds one.
-Otherwise emit error."
-  (cond
-   ((functionp search)
-    (funcall search))
-   ((stringp search)
-    (re-search-forward search nil 'noError))
-   (t (eval search))))
+Otherwise emit error.
+If MATCH-BEG is non-nil reset `match-data' go to the beginning of the match.
+That is done by resetting the match data before running the search function
+and going to `match-beginning' in that case that the search function sets
+the match data.
+The `match-data' is not reset if MATCH-BEG is nil.
+The `match-data' of the search for r-beg can be used in the search for r-end."
+  (when match-beg
+    (set-match-data nil))
+  (let ((ret
+	 (cond
+	  ((functionp search)
+	   (funcall search))
+	  ((stringp search)
+	   (re-search-forward search nil 'noError))
+	  (t (eval search)))))
+    (if (and match-beg
+	     (match-data))
+	(match-beginning 0)
+      ret)))
 
 (defmacro elgrep-with-records (r-beg r-end &rest body)
   "Restrict buffer to region R-BEG R-END and execute BODY."
@@ -1228,12 +1241,12 @@ Otherwise emit error."
 	(e (make-symbol "e")))
     `(let (,b (,e (1- (point-min))))
        (while
-	   (when (and (setq ,b (elgrep--search-forward ,r-beg))
+	   (when (and (setq ,b (elgrep--search-forward ,r-beg t))
 		      (setq ,b (if (< ,e ,b) ;; Search for r-beg:"^" and r-end:"$" in "\n\n"
 				   ,b        ;; finds the same position.
 				 (and (< ,e (point-max))
 				      (goto-char (1+ ,e))
-				      (elgrep--search-forward ,r-beg)))))
+				      (elgrep--search-forward ,r-beg t)))))
 	     (setq ,e (elgrep--search-forward ,r-end))
 	     (narrow-to-region ,b ,e)
 	     (goto-char ,b)
@@ -1545,7 +1558,8 @@ See `elgrep' for the valid options in plist OPTIONS."
 				   (or (< point-prev (setq point-prev (point)))
 				       (progn
 					 (setq pos-found nil)
-					 (goto-char (1+ point-prev)))))
+					 (and (null (eobp))
+					      (goto-char (1+ point-prev))))))
 				  (null (or (eq point-prev (setq point-prev (point)))
 					    (eobp))))
 			 (thread-yield)
