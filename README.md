@@ -63,6 +63,7 @@ List of all menu items of `elgrep-menu`:
     `(elgrep/re-search-goto-match-beginning "^[[:space:]]*#\\+begin_src[[:space:]]+emacs-lisp" nil 'noErr)`  
     Thereby, `elgrep/re-search-goto-match-beginning` is one of the utility functions for the user provided by Elgrep.
     Just call the completion for the help on function argument via <kbd>C-h f</kbd> `elgrep/` <kbd>&lt;TAB&gt;</kbd> to see the full list.
+- **Context Lines After the Match**: Analogous to the previous item.
 - **Case Sensitivity**: Determines whether the expression search is case sensitive. The default setting takes the value of the variable `case-fold-search`.
 - **Buffer Initialization**: Before the expression search starts the file contents is load into a buffer `< *elgrep-search*>`. By default the buffer contents is treated as simple text without special text syntax and properties. If you use syntax dependent functions like `forward-sexp` you should probably initialize the buffer with the syntax table for the file type or even with a full major-mode initialization.
 - **File Predicate Function**: Predicate function called with the absolute file path as argument. The function should return non-nil if that file should be searched.
@@ -70,9 +71,37 @@ List of all menu items of `elgrep-menu`:
 
 ### Examples
 
+#### Searching Org files
+
+The following simple configuration of the Elgrep search menu is for searching all Org files in and below the directory `~/KB/Soft/Emacs/elgrepTest` for the expression `\(one\|third\) section`. Adapt the path and the expression to your needs.
+
+I always only list the menu items that need to be modified:
+```
+Expression: Regexp: \(one\|second\|third\) section
+Directory: ~/KB/Soft/Emacs/elgrepTest/
+Recurse into subdirectories [X]
+```
+
+#### Searching Org source blocks
+In this example Org source blocks are treated as records. The regular expression for the beginning of the record is chosen such that only Elisp source blocks are searched. The search term `(defun` serves as a demonstration.
+
+The settings for the beginning and the end of the context are chosen such that the full context of the source block is printed in the `<*elgrep*>` buffer.
+```
+Expression: Regexp: (defun
+Directory: ~/KB/Soft/Emacs/elgrepTest
+File Name Regular Expression: \.org\'
+Recurse into subdirectories [X]
+Beginning of Record: Regexp: ^[[:space:]]*#\+begin_src[[:space:]]+emacs-lisp
+End of Record: Regexp: ^[[:space:]]*#\+end_src\>
+Context Lines Before The Match: Function or Elisp Form: elgrep/point-min
+Context Lines After The Match: Function or Elisp Form: elgrep/point-max
+```
+The following figure shows a part of the `<*elgrep*>` buffer after the search:
+![Elgrep output of Org source block search](testElgrep/elgrepOrgSrc.png)
+
 #### Searching a BibTeX database
 
-The library [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) for searching Combined EXPressions composed of regular expressions and balanced expressions works well together with Elgrep. In this example `cexp-search-forward` from [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) is used as search command.
+The library [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) for searching Combined EXPressions composed of regular expressions and balanced expressions works well together with Elgrep. In this example `cexp-search-forward` from [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) is used as search command. It helps to find the end of fields in BibTeX entries.
 
 The [github directory of Elgrep](https://github.com/TobiasZawada/elgrep) contains a directory [elgrepTest](https://github.com/TobiasZawada/elgrep/elgrepTest) with bibtex files in subdirectories. To search the bibtex files for publications by Stallman that do not contain `emacs` in the title use the following settings. Only the modified settings are listed here.
 `cexp-search-forward` from the library `cexp` is used as search function. The embraced terms `\!(...\!)` match balanced expressions. For an instance `\!(stallman\!)` matches a balanced expression that contains a match for the regular expression `stallman`. Examples for a matching strings are `"Richard M. Stallman"` and `{Richard M. Stallman}`. The function `elgrep/forward-sexp` is one of the utility functions of Elgrep. It works like `forward-sexp` but also returns point.
