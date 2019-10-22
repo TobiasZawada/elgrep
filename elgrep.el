@@ -2143,6 +2143,14 @@ at the end of the match but return nil.
   (let ((ret (apply #'re-search-forward args)))
     (and (elgrep/outside-comment-p) ret)))
 
+(defun elgrep/re-search-code (&rest args)
+  "Return same as `re-search-forward' for ARGS but only for occurences in code.
+Otherwise return nil.
+Only works with syntax tables."
+  (let ((ret (apply #'re-search-forward args)))
+    (and (null (nth 8 (syntax-ppss)))
+	 ret)))
+
 (defun elgrep/re-search-goto-match-beginning (&rest args)
   "Search for regexp like `re-search-forward' but goto beginning of match.
 The ARGS are the same as for `re-search-forward'.
