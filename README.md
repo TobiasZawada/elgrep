@@ -123,7 +123,7 @@ Search function: cexp-search-forward
 The Elgrep search returns an `<*elgrep*>` buffer with the following contents:
 ```
 -*- mode: elgrep; default-directory: "/mnt/c/Users/Tobias.Zawada/KB/Soft/Emacs/elgrepTest" -*-
-2FirstLevel/21SecondLevel/lit2.bib:71:{StallmanWhyOpenSourceMissesThePointOfFreeSoftware,
+2FirstLevel/21SecondLevel/lit2.bib:71:@misc{StallmanWhyOpenSourceMissesThePointOfFreeSoftware,
   author="Richard M. Stallman",
   title={Why Open Source misses the point of Free Software},
   year=2019,
@@ -131,7 +131,7 @@ The Elgrep search returns an `<*elgrep*>` buffer with the following contents:
   url="https://www.gnu.org/philosophy/open-source-misses-the-point.html.en",
   language = english
 }
-2FirstLevel/testLit.bib:40:{stallman99:telepolis,
+2FirstLevel/testLit.bib:40:@MISC{stallman99:telepolis,
   AUTHOR       = "Stallman, Richard Matthew and Krempl, Stefan",
   TITLE        = "{S}oftware mu{\ss} frei sein!",
   YEAR         = "1999",
@@ -146,26 +146,3 @@ The result of the Elgrep search as an image:
 
 ![Result of Elgrep search for BibTeX entries](elgrepTest/elgrepBibTeX.png)
 
-You may have noticed that the BibTeX keywords for the publication types of the entries are not printed in the Elgrep results.
-That is because the publication type is part of the match for the regular expression matching the beginning of the record and by default the record starts behind the match.
-You can include the match if you move point to the beginning of the match after the regexp search for the beginning of the record.
-If you do that you must also move over the sexp starting at the end of the last match (for the beginning of the record).
-You can do so by replacing the settings
-```
-Beginning of Record: Regexp: ^@[[:alpha:]]+
-End of Record: Function or Elisp Form: elgrep/forward-sexp
-```
-with the following ones:
-```
-Beginning of Record: Function or Elisp Form: (and (re-search-forward "^@[[:alpha:]]+" nil 'noErr) (goto-char (match-beginning 0)))
-End of Record: Function or Elisp Form: (progn (goto-char (match-end 0)) (elgrep/forward-sexp))
-```
-or equivalently by using Elgrep utility functions:
-```
-Beginning of Record: Function or Elisp Form: (elgrep/re-search-goto-match-beginning "^@[[:alpha:]]+" nil 'noErr)
-End of Record: Function or Elisp Form: elgrep/forward-sexp-at-match-end
-```
-
-With these modified settings the publication types are included in the Elgrep results:
-
-![Elgrep search for BibTeX entries with publication types](elgrepTest/elgrepBibTeXWithPubTypes.png)
