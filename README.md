@@ -79,6 +79,7 @@ I always only list the menu items that need to be modified:
 ```
 Expression: Regexp: \(one\|second\|third\) section
 Directory: ~/KB/Soft/Emacs/elgrepTest/
+File Name Regular Expression: \.org\'
 Recurse into subdirectories [X]
 ```
 
