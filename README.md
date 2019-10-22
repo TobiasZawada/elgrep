@@ -97,7 +97,7 @@ Context Lines Before The Match: Function or Elisp Form: elgrep/point-min
 Context Lines After The Match: Function or Elisp Form: elgrep/point-max
 ```
 The following figure shows a part of the `<*elgrep*>` buffer after the search:
-![Elgrep output of Org source block search](testElgrep/elgrepOrgSrc.png)
+![Elgrep output of Org source block search](elgrepTest/elgrepOrgSrc.png)
 
 #### Searching a BibTeX database
 
