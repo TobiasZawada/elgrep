@@ -72,7 +72,7 @@ List of all menu items of `elgrep-menu`:
 
 #### Searching a BibTeX database
 
-The library [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) for searching Combined EXPressions composed of regular expressions and balanced expressions works well together with Elgrep.
+The library [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) for searching Combined EXPressions composed of regular expressions and balanced expressions works well together with Elgrep. In this example `cexp-search-forward` from [cexp](https://github.com/TobiasZawada/cexp/blob/master/cexp.el) is used as search command.
 
 The [github directory of Elgrep](https://github.com/TobiasZawada/elgrep) contains a directory [elgrepTest](https://github.com/TobiasZawada/elgrep/elgrepTest) with bibtex files in subdirectories. To search the bibtex files for publications by Stallman that do not contain `emacs` in the title use the following settings. Only the modified settings are listed here.
 `cexp-search-forward` from the library `cexp` is used as search function. The embraced terms `\!(...\!)` match balanced expressions. For an instance `\!(stallman\!)` matches a balanced expression that contains a match for the regular expression `stallman`. Examples for a matching strings are `"Richard M. Stallman"` and `{Richard M. Stallman}`. The function `elgrep/forward-sexp` is one of the utility functions of Elgrep. It works like `forward-sexp` but also returns point.
