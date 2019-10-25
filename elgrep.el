@@ -651,6 +651,15 @@ If the value of OLD is nil no old widget is deleted."
   :help-echo "Run the elgrep command of this entry."
   :action 'elgrep-menu-call-run-button-action)
 
+(define-widget 'elgrep-menu-call-show-code-checkbox 'checkbox
+  "Toggle button for hiding code of call entry."
+  :tag "Hide"
+  :help-echo "Hide Elisp code for Elgrep call."
+  :elgrep-code-visibility (lambda (widget show)
+			    (widget-value-set widget show))
+  :notify 'elgrep-menu-call-show-code-notify
+  :value t)
+
 (defconst elgrep-menu-call-list-button-alist
   '((?✂ . elgrep-menu-call-cut-button)
     (?∥ . elgrep-menu-call-copy-button)
@@ -659,7 +668,8 @@ If the value of OLD is nil no old widget is deleted."
     (?↓ . elgrep-menu-call-set-button)
     (?▶ . elgrep-menu-call-run-button)
     (?i . insert-button)
-    (?d . delete-button))
+    (?d . delete-button)
+    (?□ . elgrep-menu-call-show-code-checkbox))
   "Alist mapping widget format characters to widget types.")
 
 (defun elgrep-menu-call-notify (widget changed &optional _event)
@@ -701,18 +711,72 @@ Set the help-message instead to the error property of the widget."
 Set the widget value to the string instead
 and set help-echo to the error message."
   :validate #'elgrep-menu-call-sexp-validate
+  :elgrep-code-visibility #'elgrep-widget-set-visibility ;; end point of call tree
   :value-to-internal #'elgrep-menu-call-sexp-value-to-internal
   :value-to-external #'elgrep-menu-call-sexp-value-to-external)
+
+(defun elgrep-widget-apply-to-children (widget property &rest args)
+  "Apply value of PROPERTY to children of WIDGET if PROPERTY is set there.
+For each of the children PROPERTY is called with ARGS."
+  (let (fun)
+    (cl-loop
+     for child in (widget-get widget :children)
+     when (functionp (setq fun (widget-get child property)))
+     do (apply fun child args))))
+
+(defun elgrep-widget-set-visibility (widget show)
+  "Set visibility of WIDGET according to SHOW."
+  (let ((overlay (widget-get widget :invisible)))
+    (if show
+	(when (overlayp overlay)
+	  (delete-overlay overlay)
+	  (widget-put widget :invisible nil))
+      ;; hide
+      (unless (overlayp overlay)
+	(setq overlay
+	      (make-overlay
+	       (let ((from (widget-get widget :from))
+		     beg)
+		 (if (save-excursion
+		       (goto-char from)
+		       (setq beg (line-beginning-position))
+		       (looking-back "^[[:space:]]*" beg))
+		     beg
+		   from))
+	       (let ((to (widget-get widget :to)))
+		 (if (save-excursion
+		       (goto-char to)
+		       (looking-at "[[:space:]]*$"))
+		     (line-beginning-position 2)
+		   to))
+	       nil t nil))
+	(overlay-put overlay 'invisible t)
+	(overlay-put overlay 'evaporate t)
+	(widget-put widget :invisible overlay))
+      )))
+
+(defsubst elgrep-widget-default-code-visibility (widget show)
+  "Set code visibility of WIDGET's children according to SHOW."
+  (elgrep-widget-apply-to-children widget :elgrep-code-visibility show))
+
+(define-widget 'elgrep-menu-call-list-entry 'cons
+  "Menu call list entry."
+  :tag "Elgrep Call"
+  :elgrep-code-visibility #'elgrep-widget-default-code-visibility
+  :args '((string :tag "Name")
+	  (elgrep-menu-call-sexp :tag "Form" :value nil))
+  '("" . nil))
 
 (define-widget 'elgrep-menu-call-list 'editable-list
   "Like `editable-list' widget with a name string and an elgrep form."
   :format "%v%i %•\n"
-  :entry-format "%i %d %∥ %␡ %• %↓ %▶ %v"
+  :entry-format "%i %d %∥ %␡ %• %↓ %▶ Code:%□ %v"
   :format-handler #'elgrep-menu-call-list-format-handler
   :value-create #'elgrep-menu-call-list-value-create
   :insert-before #'elgrep-menu-call-list-insert-before
   :delete-at #'elgrep-menu-call-list-delete-at
-  :notify #'elgrep-menu-call-notify)
+  :notify #'elgrep-menu-call-notify
+  :elgrep-code-visibility #'elgrep-widget-default-code-visibility)
 
 (defun elgrep-menu-call-list-format-handler (widget escape)
   "Handle :format of WIDGET `elgrep-menu-call-list' for char ESCAPE."
@@ -945,6 +1009,14 @@ want to move point back to the menu."
 	(apply #'elgrep (append (cdr command) '(:interactive t))))
     (error "Run button action failed; command:%s" command)))
 
+(defun elgrep-menu-call-show-code-notify (checkbox changed &optional _event)
+  "Hide code of menu call corresponding to WIDGET.
+EVENT is passed to `widget-checkbox-action'."
+  (when (eq checkbox changed)
+    (let* ((widget (widget-get checkbox :widget))
+	   (show (widget-value checkbox)))
+      (elgrep-widget-default-code-visibility widget show))))
+
 (defun elgrep-menu-call-add-to-list (widget command)
   "Write elgrep COMMAND to list WIDGET.
 If the first command in WIDGET is unnamed replace that one.
@@ -959,6 +1031,15 @@ Otherwise add a unnamed command at the top of WIDGET."
     ;; I consider that a bug of the widget library.
     )
   (widget-setup))
+
+(defun elgrep-menu-call-list-show-code (show)
+  "Set visibility of code according to SHOW in all call list entries."
+  (elgrep-widget-default-code-visibility elgrep-w-call-list show)
+  (when-let ((buttons (widget-get elgrep-w-call-list :buttons)))
+    (dolist (button buttons)
+      (let ((fun (widget-get button :elgrep-code-visibility)))
+	(when (functionp fun)
+	  (funcall fun button show))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1062,18 +1143,32 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
     (widget-insert " ")
     (widget-create 'elgrep-push-button :value "Paste" :action #'elgrep-menu-yank-elgrep-command)
     (widget-insert " ")
-    (widget-create 'elgrep-push-button :value "Burry elgrep menu" :action (lambda (&rest _ignore) "Burry elgrep menu." (interactive "@") (bury-buffer)))
+    (widget-create 'elgrep-push-button :value "Burry" :action (lambda (&rest _ignore) "Burry elgrep menu." (interactive "@") (bury-buffer)))
     (widget-insert " ")
-    (widget-create 'elgrep-push-button :value "Reset elgrep menu" :action (lambda (&rest _ignore) "Reset elgrep menu." (interactive "@") (elgrep-menu t)))
+    (widget-create 'elgrep-push-button :value "Reset" :action (lambda (&rest _ignore) "Reset elgrep menu." (interactive "@") (elgrep-menu t)))
+    (widget-insert " ")
+    (widget-create 'elgrep-push-button
+		   :value "Show Code"
+		   :action
+		   (lambda (&rest _ignore)
+		     "Show code of all entries."
+		     (interactive "@")
+		     (elgrep-menu-call-list-show-code t)))
+    (widget-insert " ")
+    (widget-create 'elgrep-push-button
+		   :value "Hide Code"
+		   :action
+		   (lambda (&rest _ignore)
+		     "Hide code of all entries."
+		     (interactive "@")
+		     (elgrep-menu-call-list-show-code nil)))
     (use-local-map widget-keymap)
     (local-set-key "q" #'bury-buffer)
     (widget-insert (propertize (concat "\n" (make-string 70 ?_) "\nElgrep call list:\n")
 			       'help-echo "If the first elgrep call is unnamed it is updated by the next call of elgrep.
 Otherwise a new elgrep call is added."))
     (setq-local elgrep-w-call-list (widget-create '(elgrep-menu-call-list
-						    (cons :tag "Elgrep call"
-							  (string :tag "Name")
-							  (elgrep-menu-call-sexp :tag "Form" :value nil)))
+						    (elgrep-menu-call-list-entry))
 						  :value elgrep-call-list))
     (widget-setup)
     (set-window-start (selected-window) (point-min))
@@ -1522,6 +1617,8 @@ See `elgrep' for the valid options in plist OPTIONS."
 	  (mindepth (or (plist-get options :mindepth) 0))
 	  (maxdepth (or (plist-get options :maxdepth) most-positive-fixnum))
 	  (c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
+	  (c-beg (or (plist-get options :c-beg) 0))
+	  (c-end (or (plist-get options :c-end) 0))
 	  (exclude-file-re (plist-get options :exclude-file-re))
 	  (case-fold-search (plist-get options :case-fold-search))
 	  (r-beg (or (plist-get options :r-beg) #'point-min))
@@ -1568,11 +1665,11 @@ See `elgrep' for the valid options in plist OPTIONS."
 				     (context-beginning
 				      (save-excursion
 					(goto-char (match-beginning 0))
-					(elgrep-line-position (plist-get options :c-beg) line-beginning-position re-search-backward)))
+					(elgrep-line-position c-beg line-beginning-position re-search-backward)))
 				     (context-end
 				      (save-excursion
 					(goto-char context-beginning)
-					(elgrep-line-position (plist-get options :c-end) line-end-position re-search-forward)))
+					(elgrep-line-position c-end line-end-position re-search-forward)))
 				     (matchdata (and
 						 (<= (match-end 0) context-end)
 						 (cl-loop
