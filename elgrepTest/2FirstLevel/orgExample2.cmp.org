@@ -1,0 +1,16 @@
+* Never mind!
+
+#+begin_src emacs-lisp
+(defun anotherFunWithMessage ()
+  (message "Another fun with message."))
+
+(anotherFunWithMessage)
+#+end_src
+
+* Why do you stop here? This is just the second § of an example org file!
+
+#+begin_src emacs-lisp
+(defun exampleFun ()
+  "Just an example."
+  (message "Do not stop by here. There is really nothing interesting here!"))
+#+end_src

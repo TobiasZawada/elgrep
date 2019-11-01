@@ -5,3 +5,7 @@
   "This function should contain a (message \"...\") call."
   '("... but there is none."))
 #+end_src
+
+* Another section in the org file
+
+Some text in the second sectiong of the org file.

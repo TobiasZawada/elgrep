@@ -1,0 +1,23 @@
+* Introduction
+
+This file contains a sequence of tests to be run before a new release of ~elgrep.el~.
+
+* Saving modified elgrep results
+
+#+begin_src emacs-lisp
+(progn
+  (dolist (file (directory-files-recursively "." "~\\'"))
+    (delete-file file))
+  (let ((buf (get-buffer "*elgrep*")))
+    (when (buffer-live-p buf)
+      (kill-buffer buf)))
+  (elgrep/i "." "\\.org\\'" "section" :recursive t :mindepth 1 :file-fun (lambda (name) (concat name ".~100~")))
+  (with-current-buffer "*elgrep*"
+    (elgrep-edit-mode)
+    (goto-char (point-min))
+    (while (search-forward "section" nil t)
+      (replace-match "§"))
+    (elgrep-save)))
+#+end_src
+
+#+RESULTS:

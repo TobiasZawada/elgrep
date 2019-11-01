@@ -1330,11 +1330,16 @@ The `match-data' of the search for r-beg can be used in the search for r-end."
       ret)))
 
 (defmacro elgrep-with-records (r-beg r-end &rest body)
-  "Restrict buffer to region R-BEG R-END and execute BODY."
+  "Search buffer for records bounded by R-BEG, R-END and execute BODY therein.
+The record boundaries are searched with `elgrep--search-forward'."
   (declare (indent 2) (debug (sexp sexp body)))
-  (let ((b (make-symbol "b"))
+  (let ((pt-min (make-symbol "pt-min"))
+	(pt-max (make-symbol "pt-max"))
+	(b (make-symbol "b"))
 	(e (make-symbol "e")))
-    `(let (,b (,e (1- (point-min))))
+    `(let ((,pt-min (point-min))
+	   (,pt-max (point-max))
+	   ,b (,e (1- (point-min))))
        (while
 	   (when (and (setq ,b (elgrep--search-forward ,r-beg t))
 		      (setq ,b (if (< ,e ,b) ;; Search for r-beg:"^" and r-end:"$" in "\n\n"
@@ -1347,7 +1352,7 @@ The `match-data' of the search for r-beg can be used in the search for r-end."
 	     (goto-char ,b)
 	     (save-restriction
 	       ,@body)
-	     (widen)
+	     (widen) (narrow-to-region ,pt-min ,pt-max) ;; restore original region
 	     (goto-char ,e)
 	     (< ,e (point-max)))))))
 
@@ -1361,6 +1366,24 @@ This is a destructive operation."
   plist)
 ;; Test:
 ;; (equal (elgrep-intern-plist-keys (list ":first" 1 :second "2" ":third" 3)) '(:first 1 :second "2" :third 3))
+
+(defvar-local elgrep-args nil
+  "Arguments `elgrep' is called with.
+Used in the '*elgrep*' buffer.")
+
+(defun elgrep-args-options (&rest optional-args)
+  "Get options from elgrep ARGS.
+ARGS defaults to the value of `elgrep-args'.
+
+Note, that ARGS is actually retrieved from (car OPTIONAL-ARGS).
+
+Arglist of the actual implementation: &rest OPTIONAL-ARGS
+
+\(fn &optional ARGS)"
+  (let ((args (if optional-args
+		  (car optional-args)
+		elgrep-args)))
+    (nthcdr 3 args)))
 
 ;;;###autoload
 (defun elgrep (dir file-name-re re &rest options)
@@ -1452,12 +1475,15 @@ Defaults to the value of `case-fold-search'.
 
 :buffer-init may be one of the following symbols:
 nil (default): Do not initialize buffer.
-syntax-table: Just set the syntax table corresponding to the auto-mode of the file.
-major-mode: Full major-mode initialization of the auto-mode corresponding to the file.
+syntax-table: Just set the syntax table corresponding
+              to the auto-mode of the file.
+major-mode: Full major-mode initialization of the auto-mode corresponding
+            to the file.
 
 :file-fun
 Predicate function called with the file path as argument.
 The function should return non-nil if that file should be searched.
+If the return value is a string it is used as new file name for `elgrep-save'.
 Option :abs decides whether the path is relative or absolute.
 
 :search-fun
@@ -1579,6 +1605,81 @@ when all requirements are fulfilled."
      (widen)
      ,@body))
 
+(defun elgrep-occur-search (re &rest options)
+  "Collect lines matching RE in the records of the current buffer.
+
+The following set of OPTIONS is describe in the help of `elgrep':
+:c-op
+:c-beg
+:c-end
+:case-fold-search
+:r-beg
+:r-end
+:search-fun
+
+The return value is a list of matches.
+Each match is a cons `(,(current-buffer) . MATCHDATA).
+The structure of MATCHDATA is described in the doc string of `elgrep-search'."
+  (let* ((c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
+	 (c-beg (or (plist-get options :c-beg) 0))
+	 (c-end (or (plist-get options :c-end) 0))
+	 (case-fold-search (plist-get options :case-fold-search))
+	 (r-beg (or (plist-get options :r-beg) #'point-min))
+	 (r-end (or (plist-get options :r-end) #'point-max))
+	 (search-fun (or (plist-get options :search-fun) #'re-search-forward))
+	 matches
+	 (last-pos (point-min))
+	 (last-line-number 1))
+    (elgrep-with-records r-beg r-end
+      (let (match
+	    (required-matches (cdr-safe re))
+	    (re-str (or (car-safe re)
+			re))
+	    (point-prev 0)
+	    pos-found)
+	(when (elgrep-required-matches search-fun required-matches)
+	  (while (or (and
+		      (setq pos-found (funcall search-fun re-str nil 'noError))
+		      (or (< point-prev (setq point-prev (point)))
+			  (progn
+			    (setq pos-found nil)
+			    (and (null (eobp))
+				 (goto-char (1+ point-prev))))))
+		     (null (or (eq point-prev (setq point-prev (point)))
+			       (eobp))))
+	    (thread-yield)
+	    (when-let* (pos-found
+			(n (/ (length (match-data)) 2))
+			(context-beginning
+			 (save-excursion
+			   (goto-char (match-beginning 0))
+			   (elgrep-line-position c-beg line-beginning-position re-search-backward)))
+			(context-end
+			 (save-excursion
+			   (goto-char context-beginning)
+			   (elgrep-line-position c-end line-end-position re-search-forward)))
+			(matchdata (and
+				    (<= (match-end 0) context-end)
+				    (cl-loop
+				     for i from 0 below n
+				     collect
+				     (list :match (match-string-no-properties i)
+					   :context (funcall c-op context-beginning context-end)
+					   :line (elgrep-with-wide-buffer
+						  (setq last-line-number
+							(+ last-line-number
+							   (count-lines last-pos (line-beginning-position))))
+						  (setq last-pos (line-beginning-position))
+						  last-line-number)
+					   :context-beg context-beginning
+					   :context-end context-end
+					   :beg (match-beginning i)
+					   :end (match-end i))))))
+	      (setq match (cons matchdata match)))))
+	(when match
+	  (setq matches (cons (cons (current-buffer) (nreverse match)) matches)))))
+    matches))
+
 (defun elgrep-search (dir file-name-re re &rest options)
   "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
 This is done via Emacs Lisp (no dependence on external grep).
@@ -1616,14 +1717,7 @@ See `elgrep' for the valid options in plist OPTIONS."
 	  (depth (plist-get options :depth))
 	  (mindepth (or (plist-get options :mindepth) 0))
 	  (maxdepth (or (plist-get options :maxdepth) most-positive-fixnum))
-	  (c-op (or (plist-get options :c-op) 'buffer-substring-no-properties))
-	  (c-beg (or (plist-get options :c-beg) 0))
-	  (c-end (or (plist-get options :c-end) 0))
 	  (exclude-file-re (plist-get options :exclude-file-re))
-	  (case-fold-search (plist-get options :case-fold-search))
-	  (r-beg (or (plist-get options :r-beg) #'point-min))
-	  (r-end (or (plist-get options :r-end) #'point-max))
-          (search-fun (or (plist-get options :search-fun) #'re-search-forward))
 	  (file-fun (plist-get options :file-fun)))
       (when (and exclude-file-re (null (string-equal exclude-file-re "")))
 	(setq files (cl-remove-if (lambda (fname) (string-match exclude-file-re fname)) files)))
@@ -1640,59 +1734,15 @@ See `elgrep' for the valid options in plist OPTIONS."
 	 (thread-yield)
 	 (if re
 	     (elgrep-prepare-buffer file dir options
-	       (let ((last-pos (point-min))
-		     (last-line-number 1))
-		 (elgrep-with-records r-beg r-end
-		   (let (filematch
-			 (required-matches (cdr-safe re))
-			 (re-str (or (car-safe re)
-				     re))
-			 (point-prev 0)
-			 pos-found)
-		     (when (elgrep-required-matches search-fun required-matches)
-		       (while (or (and
-				   (setq pos-found (funcall search-fun re-str nil 'noError))
-				   (or (< point-prev (setq point-prev (point)))
-				       (progn
-					 (setq pos-found nil)
-					 (and (null (eobp))
-					      (goto-char (1+ point-prev))))))
-				  (null (or (eq point-prev (setq point-prev (point)))
-					    (eobp))))
-			 (thread-yield)
-			 (when-let* (pos-found
-				     (n (/ (length (match-data)) 2))
-				     (context-beginning
-				      (save-excursion
-					(goto-char (match-beginning 0))
-					(elgrep-line-position c-beg line-beginning-position re-search-backward)))
-				     (context-end
-				      (save-excursion
-					(goto-char context-beginning)
-					(elgrep-line-position c-end line-end-position re-search-forward)))
-				     (matchdata (and
-						 (<= (match-end 0) context-end)
-						 (cl-loop
-						  for i from 0 below n
-						  collect
-						  (list :match (match-string-no-properties i)
-							:context (funcall c-op context-beginning context-end)
-							:line (elgrep-with-wide-buffer
-							       (setq last-line-number
-								     (+ last-line-number
-									(count-lines last-pos (line-beginning-position))))
-							       (setq last-pos (line-beginning-position))
-							       last-line-number)
-							:context-beg context-beginning
-							:context-end context-end
-							:beg (match-beginning i)
-							:end (match-end i))))))
-			   (setq filematch (cons matchdata filematch)))))
-		     (when filematch
-		       (setq filematches (cons (cons file (nreverse filematch)) filematches)))))))
+	       (setq filematches
+		     (append filematches
+			     (mapcar
+			      (lambda (match)
+				(setcar match file)
+				match)
+			      (apply #'elgrep-occur-search re options)))))
 	   ;; no re given; just register file with dummy matchdata
 	   (setq filematches (cons (list file) filematches)))))
-      (setq filematches (nreverse filematches))
       (when (and (plist-get options :recursive)
 		 (< depth maxdepth))
 	(setq files (cl-loop
@@ -1730,7 +1780,8 @@ See `elgrep' for the valid options in plist OPTIONS."
       filematches)))
 
 (defun elgrep-show (filematches dir file-name-re re &rest options)
-  "Show FILEMATCHES generated by `elgrep-search' with DIR FILE-NAME-RE RE OPTIONS.
+  "Show FILEMATCHES generated by `elgrep-search'.
+The parameters DIR FILE-NAME-RE RE OPTIONS are the same as for `elgrep-search'.
 See `elgrep' for the valid options in the plist OPTIONS."
   (when (or (plist-get options :interactive) (called-interactively-p 'any))
     (unless dir
@@ -1747,6 +1798,10 @@ See `elgrep' for the valid options in the plist OPTIONS."
 		    (elgrep-list-matches filematches options)
 		    (elgrep-mode))
 		(elgrep-dired-files (mapcar 'car filematches)))
+	      (setq elgrep-args (append
+				 (list dir file-name-re re)
+				 options))
+	      (set-buffer-modified-p nil)
 	      (display-buffer (current-buffer)))
 	  (unless (plist-get options :keep-elgrep-buffer)
 	    (kill-buffer))
@@ -1840,48 +1895,89 @@ Abort if B or E is in the middle of a read-only region."
   (let ((inhibit-read-only t))
     (delete-region b e)))
 
-(defun elgrep-save (really-save)
-  "Apply modifications in the current elgrep buffer to the client buffers.
-Save modified client buffers if REALLY-SAVE is non-nil.
-Interactively, REALLY-SAVE is set to the prefix arg."
-  (interactive "p")
-  (save-excursion
-    (goto-char (point-max))
-    (let ((last-pos (point))
-	  files-to-save)
-      (while (and
-	      (null (bobp))
-	      (condition-case nil
-		  (progn (compilation-next-error -1) ;; barfs if the buffer does not contain any message at all
-			 t)
-		(error nil)))
-	(let* ((edited-str (buffer-substring-no-properties (next-single-property-change (point) 'compilation-message) (1- last-pos)))
-	       (msg (get-text-property (point) 'compilation-message))
-	       (context-begin (get-text-property (point) 'elgrep-context-begin))
-	       (context-end (get-text-property (point) 'elgrep-context-end))
-	       (context (get-text-property (point) 'elgrep-context))
-	       (loc (compilation--message->loc msg))
-	       (file-struct (compilation--loc->file-struct loc))
-	       (name (caar file-struct))
-	       (dir (cadar file-struct))
-	       (path (if dir (expand-file-name name (file-name-directory dir)) name)))
-	  (setq last-pos (point))
-	  (with-current-buffer (find-file-noselect path)
-	    (goto-char context-begin)
-	    (let* ((original-str (buffer-substring-no-properties  context-begin context-end)))
-	      (when (and (string-equal context original-str) ;; It is still the old context...
-			 (null (string-equal edited-str original-str))) ;; and this has been changed in *elgrep*.
-		(kill-region context-begin context-end)
-		(insert edited-str)
-		(unless (member path files-to-save)
-		  (push path files-to-save))
-		)))))
-      (when really-save
-	(while files-to-save
-	  (with-current-buffer (get-file-buffer (car files-to-save))
-	    (save-buffer))
-	  (setq files-to-save (cdr files-to-save))))
-      files-to-save)))
+(defun elgrep-save-collect ()
+  "Collect all entries from the current elgrep result buffer.
+Return an alist mapping the files to modification lists.
+Each modification in the modification list is a list (BEG END CONTEXT EDITED).
+BEG and END are the beginning and the end of the context.
+CONTEXT is what `elgrep-search' found in the file.
+EDITED is the edited text in the elgrep buffer."
+  (cl-assert (eq major-mode 'elgrep-mode) nil
+	     "Major mode of buffer %s is not `elgrep-mode'" (current-buffer))
+  (let (file-mod-alist)
+    (goto-char (point-min))
+    (while (and
+	    (null (eobp))
+	    (condition-case nil
+		(progn (compilation-next-error 1) ;; barfs if the buffer does not contain any message at all
+		       t)
+	      (error nil)))
+      (let* ((beg (point))
+	     (context (get-text-property (point) 'elgrep-context))
+	     (edited-string (buffer-substring-no-properties (goto-char (next-single-property-change (point) 'compilation-message)) (goto-char (1- (or (next-single-property-change (point) 'compilation-message)
+																		      (point-max)))))))
+	(when (and (stringp context)
+		   (null (string-equal edited-string context)))
+	  (let* ((msg (get-text-property beg 'compilation-message))
+		 (loc (compilation--message->loc msg))
+		 (file-struct (compilation--loc->file-struct loc))
+		 (name (caar file-struct))
+		 (dir (cadar file-struct))
+		 (path (if dir (expand-file-name name (file-name-directory dir)) name))
+		 (entry (or
+			 ;; first try to get a direct match because this is faster
+			 ;; (it may be that there are many file-mod-alist in one file)
+			 (assoc-string path file-mod-alist)
+			 (cl-assoc path file-mod-alist :test #'file-equal-p)
+			 (car (setq file-mod-alist (cons (list path) file-mod-alist))))))
+	    (setcdr entry
+		    (cons
+		     (list
+		      (get-text-property beg 'elgrep-context-begin)
+		      (get-text-property beg 'elgrep-context-end)
+		      context
+		      edited-string)
+		     (cdr entry)))))))
+    (mapc
+     (lambda (file-modifications)
+       ;; Don't touch (car file-modifications). It is the file name.
+       (setcdr file-modifications
+	       (cl-sort (cdr file-modifications) #'> :key #'car)))
+     file-mod-alist)
+    file-mod-alist))
+
+(defun elgrep-save (&optional _really-save)
+  "Apply modifications in the current elgrep buffer to the files.
+The argument _REALLY-SAVE is for compatibility only."
+  (interactive)
+  (let ((file-matches-alist (elgrep-save-collect))
+	(file-fun (plist-get (elgrep-args-options elgrep-args) :file-fun)))
+    (save-excursion
+      (dolist (file-matches file-matches-alist)
+	(let ((file (car file-matches))
+	      (matches (cdr file-matches))
+	      file-modified)
+	  (if (file-writable-p file)
+	      (with-temp-buffer
+		(insert-file-contents file)
+		(dolist (match matches)
+		  (cl-multiple-value-bind
+		      (context-begin context-end context edited-str)
+		      match
+		    (goto-char context-begin)
+		    (let* ((original-str (buffer-substring-no-properties context-begin context-end)))
+		      (when (and (string-equal context original-str) ;; It is still the old context...
+				 (null (string-equal edited-str original-str))) ;; and this has been changed in *elgrep*.
+			(setq file-modified t)
+			(kill-region context-begin context-end)
+			(insert edited-str)))))
+		(when file-modified
+		  (let ((new-name (or (and (functionp file-fun)
+					   (funcall file-fun file))
+				      file)))
+		    (write-file (or (and (stringp new-name) new-name)
+				    file))))))))))
+  (set-buffer-modified-p nil))
 
 (defvar elgrep-edit-mode-map (let ((map (copy-keymap global-map)))
                                (define-key map [remap save-buffer] #'elgrep-save)
@@ -1926,12 +2022,14 @@ When it is switched off it should restore the old header line which is preserved
 	      '(elgrep-flush-lines-function
 		elgrep-keep-lines-function))
         (define-key (current-local-map) [remap self-insert-command] nil)
-        (elgrep-enrich-text-property 'compilation-message '(read-only t intangible t))
+	(with-silent-modifications
+	  (elgrep-enrich-text-property 'compilation-message '(read-only t intangible t)))
         (when (eq buffer-undo-list t)
           (setq buffer-undo-list nil)
           (set-buffer-modified-p nil)))
     (setq header-line-format elgrep-edit-previous-header
-	  elgrep-edit-previous-header nil)
+	  elgrep-edit-previous-header nil
+	  buffer-read-only t)
     (remove-function (local 'region-extract-function)
 		     #'elgrep-region-extract-ad)
     (mapc (lambda (var)
