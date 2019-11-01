@@ -56,6 +56,11 @@
 ;;   calls of recursive elgrep work again.
 ;; 2019-10-20:
 ;; - Allow lisp forms as c-beg, c-end, r-beg, and r-end.
+;; 2019-11-01:
+;; - Incompatible change:
+;;   `elgrep-save' now does not keep modified buffers open
+;;   but immediately saves to disk and kills the correponding temporary buffer
+;;   Nevertheless `elgrep-save' keeps its arg for compatibility even if it is meaningless now.
 ;;; Code:
 
 (require 'widget)
