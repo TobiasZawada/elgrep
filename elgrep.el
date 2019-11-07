@@ -56,11 +56,10 @@
 ;;   calls of recursive elgrep work again.
 ;; 2019-10-20:
 ;; - Allow lisp forms as c-beg, c-end, r-beg, and r-end.
-;; 2019-11-01:
-;; - Incompatible change:
-;;   `elgrep-save' now does not keep modified buffers open
-;;   but immediately saves to disk and kills the correponding temporary buffer
-;;   Nevertheless `elgrep-save' keeps its arg for compatibility even if it is meaningless now.
+;; 2019-11-07:
+;; - Optionally follow symlinks (elgrep option :symlink)
+;; - Enable saving of the elgrep-menu buffer
+;; - Bugfix: Correct order of results of `elgrep-occur-search'
 ;;; Code:
 
 (require 'widget)
@@ -235,6 +234,7 @@ Keywords supported: :test"
 (defvar elgrep-w-file-name-re)
 (defvar elgrep-w-re)
 (defvar elgrep-w-recursive)
+(defvar elgrep-w-symlink)
 (defvar elgrep-w-mindepth)
 (defvar elgrep-w-maxdepth)
 (defvar elgrep-w-r-beg)
@@ -307,6 +307,7 @@ Comparison done with `equal'."
       (eq async 'thread)))
 
 (defconst elgrep-menu-arg-alist '((recursive . booleanp)
+				  (symlink . booleanp)
 				  (mindepth . integerp)
 				  (maxdepth . integerp)
 				  (r-beg . elgrep-menu-record-p)
@@ -382,6 +383,7 @@ If there is no elgrep process reset Start button."
 	    (elgrep-widget-value-update-hist elgrep-w-file-name-re)
 	    (elgrep-widget-value-update-hist elgrep-w-re)
 	    :recursive (widget-value elgrep-w-recursive)
+	    :symlink (widget-value elgrep-w-symlink)
 	    :mindepth (widget-value elgrep-w-mindepth)
 	    :maxdepth (widget-value elgrep-w-maxdepth)
 	    :r-beg (widget-value elgrep-w-r-beg)
@@ -603,7 +605,8 @@ If the value of OLD is nil no old widget is deleted."
       (elgrep-widget-replace 'elgrep-w-start 'elgrep-push-button :value "Start elgrep" :action #'elgrep-menu-elgrep))))
 
 (define-derived-mode elgrep-menu-mode fundamental-mode "Elgrep-Menu"
-  "Major mode for elgrep menus.")
+  "Major mode for elgrep menus."
+  (add-hook 'write-contents-functions #'elgrep-save-elgrep-data-file nil t))
 
 (defun elgrep-get-menu-buffer (id)
   "Get menu buffer with value of variable `elgrep-menu-id' equal to ID."
@@ -1112,8 +1115,10 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
 							      :prompt-history 'regexp-history
 							      :keymap elgrep-menu-hist-map
 							      :format "Exclude Directory Name Regular Expression (ignored when empty): %v" ""))
-    (widget-insert  "Recurse into subdirectories ")
+    (widget-insert  "Recurse Into Subdirectories ")
     (setq-local elgrep-w-recursive (elgrep-widget-create 'checkbox nil))
+    (widget-insert  "  Follow Symlinks ")
+    (setq-local elgrep-w-symlink (elgrep-widget-create 'checkbox nil))
     (setq-local elgrep-w-async (elgrep-widget-create
 				'(radio-button-choice :tag "\nRun Asynchronously (experimental)" :format "%t: %v"
 					 (const :tag "Separate instance of Emacs" :format "%t\t" t)
@@ -1150,7 +1155,7 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
     (widget-insert " ")
     (widget-create 'elgrep-push-button :value "Burry" :action (lambda (&rest _ignore) "Burry elgrep menu." (interactive "@") (bury-buffer)))
     (widget-insert " ")
-    (widget-create 'elgrep-push-button :value "Reset" :action (lambda (&rest _ignore) "Reset elgrep menu." (interactive "@") (elgrep-menu t)))
+    (widget-create 'elgrep-push-button :value "Reset" :action (lambda (_widget event) "Reset elgrep menu." (interactive "@") (elgrep-menu event)))
     (widget-insert " ")
     (widget-create 'elgrep-push-button
 		   :value "Show Code"
@@ -1289,24 +1294,25 @@ Return nil if reading of the directory fails."
 ;; test
 ;; (elgrep-get-auto-mode)
 
+(defun elgrep-initialize-buffer (file options)
+  "Insert FILE contents and set syntax table or mode according to OPTIONS."
+  (erase-buffer)
+  (elgrep-insert-file-contents (if (plist-get options :abs) file buffer-file-name))
+  (cl-case (plist-get options :buffer-init)
+    (syntax-table
+     (when-let ((mode (elgrep-get-auto-mode))
+		(table (intern-soft (concat (symbol-name mode) "-syntax-table"))))
+       (set-syntax-table (symbol-value table))))
+    (major-mode
+     (after-find-file nil nil t))))
+
 (defmacro elgrep-prepare-buffer (file dir options &rest body)
   "Prepare < *elgrep-search*> buffer for check of FILE in DIR with OPTIONS.
 Run BODY like `progn'."
   (declare (indent 3) (debug (sexp sexp sexp body)))
-  (let ((mode (make-symbol "mode"))
-	(table (make-symbol "table")))
-    `(let ((buffer-file-name (expand-file-name ,file ,dir)))
-       (erase-buffer)
-       (elgrep-insert-file-contents (if (plist-get ,options :abs) ,file buffer-file-name))
-       (cl-case (plist-get ,options :buffer-init)
-	 (syntax-table
-	  (when-let ((,mode (elgrep-get-auto-mode))
-		     (,table (intern-soft (concat (symbol-name ,mode) "-syntax-table"))))
-	    (set-syntax-table (symbol-value ,table))))
-	 (major-mode
-	  (after-find-file nil nil t nil t)))
-       ,@body
-       )))
+  `(let ((buffer-file-name (expand-file-name ,file ,dir)))
+     (elgrep-initialize-buffer ,file ,options)
+     ,@body))
 
 (defun elgrep--search-forward (search &optional match-beg)
   "Search for SEARCH.
@@ -1334,32 +1340,38 @@ The `match-data' of the search for r-beg can be used in the search for r-end."
 	(match-beginning 0)
       ret)))
 
+(defun elgrep-with-records-f (r-beg r-end fun)
+  "Search buffer for records bounded by R-BEG, R-END and execute FUN therein.
+This is the driver function for `elgrep-with-records'.
+The record boundaries are searched with `elgrep--search-forward'."
+  (let ((pt-min (point-min))
+	(pt-max (point-max))
+	b (e (1- (point-min))))
+    (while
+	(when (and (setq b (elgrep--search-forward r-beg t))
+		   (setq b (if (< e b) ;; Search for r-beg:"^" and r-end:"$" in "\n\n"
+			       b        ;; finds the same position.
+			     (and (< e (point-max))
+				  (goto-char (1+ e))
+				  (elgrep--search-forward r-beg t)))))
+	  (setq e (elgrep--search-forward r-end))
+	  (narrow-to-region b e)
+	  (goto-char b)
+	  (save-restriction
+	    (funcall fun))
+	  (widen) (narrow-to-region pt-min pt-max) ;; restore original region
+	  (goto-char e)
+	  (< e (point-max))))))
+
 (defmacro elgrep-with-records (r-beg r-end &rest body)
   "Search buffer for records bounded by R-BEG, R-END and execute BODY therein.
 The record boundaries are searched with `elgrep--search-forward'."
   (declare (indent 2) (debug (sexp sexp body)))
-  (let ((pt-min (make-symbol "pt-min"))
-	(pt-max (make-symbol "pt-max"))
-	(b (make-symbol "b"))
-	(e (make-symbol "e")))
-    `(let ((,pt-min (point-min))
-	   (,pt-max (point-max))
-	   ,b (,e (1- (point-min))))
-       (while
-	   (when (and (setq ,b (elgrep--search-forward ,r-beg t))
-		      (setq ,b (if (< ,e ,b) ;; Search for r-beg:"^" and r-end:"$" in "\n\n"
-				   ,b        ;; finds the same position.
-				 (and (< ,e (point-max))
-				      (goto-char (1+ ,e))
-				      (elgrep--search-forward ,r-beg t)))))
-	     (setq ,e (elgrep--search-forward ,r-end))
-	     (narrow-to-region ,b ,e)
-	     (goto-char ,b)
-	     (save-restriction
-	       ,@body)
-	     (widen) (narrow-to-region ,pt-min ,pt-max) ;; restore original region
-	     (goto-char ,e)
-	     (< ,e (point-max)))))))
+  `(elgrep-with-records-f
+    ,r-beg
+    ,r-end
+    (lambda ()
+      ,@body)))
 
 (defun elgrep-intern-plist-keys (plist)
   "Intern all string keys of PLIST that are given.
@@ -1452,6 +1464,9 @@ Defaults to `buffer-substring-no-properties'.
 t: also grep recursively subdirectories in dir
 \(also if called interactively with prefix arg)
 Defaults to nil.
+
+:symlink
+t: also follow symbolic links when recursing
 
 :formatter
 Formatting function to call for each match
@@ -1683,7 +1698,7 @@ The structure of MATCHDATA is described in the doc string of `elgrep-search'."
 	      (setq match (cons matchdata match)))))
 	(when match
 	  (setq matches (cons (cons (current-buffer) (nreverse match)) matches)))))
-    matches))
+    (nreverse matches)))
 
 (defun elgrep-search (dir file-name-re re &rest options)
   "In path DIR grep files with name matching FILE-NAME-RE for text matching RE.
@@ -1723,9 +1738,12 @@ See `elgrep' for the valid options in plist OPTIONS."
 	  (mindepth (or (plist-get options :mindepth) 0))
 	  (maxdepth (or (plist-get options :maxdepth) most-positive-fixnum))
 	  (exclude-file-re (plist-get options :exclude-file-re))
+	  (symlink (plist-get options :symlink))
 	  (file-fun (plist-get options :file-fun)))
       (when (and exclude-file-re (null (string-equal exclude-file-re "")))
 	(setq files (cl-remove-if (lambda (fname) (string-match exclude-file-re fname)) files)))
+      (unless symlink
+	(setq files (cl-remove-if #'file-symlink-p files)))
       (when (functionp file-fun)
 	(setq files (cl-remove-if-not file-fun files)))
       (cl-loop
@@ -1759,6 +1777,7 @@ See `elgrep' for the valid options in plist OPTIONS."
 			     (progn (thread-yield)
 				    (elgrep-log "Directory %S not accessible\n")
 				    nil))
+			 (or symlink (null (file-symlink-p path)))
 			 (let ((dir-re (plist-get options :dir-re))
 			       (exclude-dir-re (plist-get options :exclude-dir-re)))
 			   (and (or (null dir-re)
@@ -2061,13 +2080,15 @@ When it is switched off it should restore the old header line which is preserved
 
 (defun elgrep-save-elgrep-data-file ()
   "Save the elgrep data file if `elgrep-data-file' is a string.
-This can be used as `kill-emacs-hook'."
+This can be used as `kill-emacs-hook'.
+Unconditionally return the value of `elgrep-data-file'."
   (interactive)
   (when (stringp elgrep-data-file)
     (with-temp-buffer
       (insert (format "%S" `(setq elgrep-call-list (quote ,elgrep-call-list))))
       (write-file
-       (expand-file-name elgrep-data-file user-emacs-directory)))))
+       (expand-file-name elgrep-data-file user-emacs-directory))))
+  elgrep-data-file)
 
 (add-hook 'kill-emacs-hook #'elgrep-save-elgrep-data-file)
 
