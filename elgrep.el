@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2015  Tobias Zawada
 
-;; Author: Tobias Zawada <naehring@smtp.1und1.de>
+;; Author: Tobias Zawada <i@tn-home.de>
 ;; Keywords: tools, matching, files, unix
 ;; Version: 1.0.0
 ;; URL: https://github.com/TobiasZawada/elgrep
@@ -60,6 +60,7 @@
 ;; - Optionally follow symlinks (elgrep option :symlink)
 ;; - Enable saving of the elgrep-menu buffer
 ;; - Bugfix: Correct order of results of `elgrep-occur-search'
+
 ;;; Code:
 
 (require 'widget)
@@ -405,8 +406,9 @@ If there is no elgrep process reset Start button."
 (defun elgrep-menu-elgrep-command (&rest _ignore)
   "Copy elgrep command resulting from current elgrep menu settings."
   (interactive "@")
-  (kill-new (prin1-to-string (cons 'elgrep/i
-				   (elgrep-menu-arg-list)))))
+  (let (print-level print-length)
+    (kill-new (prin1-to-string (cons 'elgrep/i
+				     (elgrep-menu-arg-list))))))
 
 (defun elgrep-menu-check-elgrep-command (command)
   "Check whether COMMAND is a valid `elgrep' form.
@@ -951,15 +953,19 @@ update `elgrep-call-list'."
 
 (defun elgrep-menu-call-copy-button-action (button &optional _event)
   "Copy command of BUTTON widget to clipboard."
-  (let* ((widget (widget-get button :widget))
+  (let* (print-level
+	 print-length
+	 (widget (widget-get button :widget))
 	 (command (widget-value widget)))
     (kill-new (format "%S" command))))
 
 (defun elgrep-menu-call-sexp-value-to-internal (_widget value)
   "Don't insert newlines for VALUE when working like `widget-sexp-value-to-internal'."
-  (let ((pp (if (symbolp value)
-		(prin1-to-string value)
-	      (pp-to-string value))))
+  (let* (print-level
+	 print-length
+	 (pp (if (symbolp value)
+		 (prin1-to-string value)
+	       (pp-to-string value))))
     (while (string-match "\n\\'" pp)
       (setq pp (substring pp 0 -1)))
     pp))
@@ -2085,7 +2091,8 @@ Unconditionally return the value of `elgrep-data-file'."
   (interactive)
   (when (stringp elgrep-data-file)
     (with-temp-buffer
-      (insert (format "%S" `(setq elgrep-call-list (quote ,elgrep-call-list))))
+      (let (print-level print-length)
+	(insert (format "%S" `(setq elgrep-call-list (quote ,elgrep-call-list)))))
       (write-file
        (expand-file-name elgrep-data-file user-emacs-directory))))
   elgrep-data-file)
