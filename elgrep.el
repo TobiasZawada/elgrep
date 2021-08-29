@@ -1506,7 +1506,7 @@ Can be a regular expression, a function without args
 or a list of record delimiters.
 If the function finds a record beginning, it should return its position
 like `search-forward'.
-Search starts at buffer beginning or at end of last recurd.
+Search starts at buffer beginning or at end of last record.
 Defaults to `point-min'.
 A list of record delimiters allows to define nested records.
 One example where this becomes handy is, when one wants to grep
