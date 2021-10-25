@@ -110,6 +110,7 @@ and an evaluable elgrep form.")
 ;; This implies that `elgrep-edit' does not work anymore with
 ;; `grep-mode' allone.
 ;; Therefore, we introduce a new mode for listing the elgrep matches:
+;;;###autoload
 (define-derived-mode elgrep-mode grep-mode "elgrep"
   "Major mode for elgrep buffers.
 See `elgrep' and `elgrep-menu' for details."
@@ -123,9 +124,11 @@ See `elgrep' and `elgrep-menu' for details."
   '("Elgrep"
     ["Next Match" compilation-next-error :enable t :help "Visit the next match and corresponding location"]
     ["Previous Match" compilation-previous-error :enable t :help "Visit the previous match and corresponding location"]
+    ["Kill Match" elgrep-kill-compilation-message :enable t :help "Kill match at point"]
     ["First Match" first-error :enable t :help "Restart at the first match, visit corresponding location"]
+    ["Display Match at Point" next-error-follow-minor-mode :enable t :style toggle :selected next-error-follow-minor-mode :help "Update the display of the match when you move point"]
     "--"
-    ["Elgrep-edit" elgrep-edit-mode :enable t :help "Toggle Elgrep Edit Mode for editing matches and saving them"]
+    ["Elgrep-edit" elgrep-edit-mode :enable t :style toggle :selected elgrep-edit-mode :help "Toggle Elgrep Edit Mode for editing matches and saving them"]
     ["Rerun Elgrep" elgrep-rerun :enable t :help "Rerun Elgrep, C-u: Read command from minibuffer with previous command as default input"]))
 
 (define-key elgrep-mode-map (kbd "<menu-bar> <grep>") nil)
@@ -136,6 +139,8 @@ See `elgrep' and `elgrep-menu' for details."
 May also contain lists of regular expressions.")
 (defvar elgrep-file-name-re-hist nil
   "History of file-name regular expressions for `elgrep' (which see).")
+(defvar elgrep-exclude-file-re-history nil
+  "History of exclusion regexp for file names.")
 (defvar elgrep-record-beg-re-hist nil
   "History for record begin regexps.")
 (defvar elgrep-record-end-re-hist nil
@@ -332,6 +337,10 @@ CURRENT should be one of the elements of (widget-get widget :args)."
   (or (booleanp async)
       (eq async 'thread)))
 
+(defsubst elgrep-string-or-function-p (val)
+  "Return non-nil if VAL is a string or a function."
+  (or (stringp val) (functionp val)))
+
 (defconst elgrep-menu-arg-alist '((recursive . booleanp)
 				  (symlink . booleanp)
 				  (mindepth . integerp)
@@ -341,7 +350,7 @@ CURRENT should be one of the elements of (widget-get widget :args)."
 				  (c-beg . elgrep-menu-context-p)
 				  (c-end . elgrep-menu-context-p)
 				  (case-fold-search . booleanp)
-				  (exclude-file-re . stringp)
+				  (exclude-file-re . elgrep-string-or-function-p)
 				  (dir-re . stringp)
 				  (exclude-dir-re . stringp)
 				  (async . elgrep-menu-async-p)
@@ -553,6 +562,7 @@ Used in `elgrep-menu-hist-up' and `elgrep-menu-hist-down'.")
                                (define-key map (kbd "ESC <up>") #'elgrep-menu-hist-up)
 			       (define-key map (kbd "<M-down>") #'elgrep-menu-hist-down)
                                (define-key map (kbd "ESC <down>") #'elgrep-menu-hist-down)
+			       (define-key map (kbd "C-c <delete>") #'elgrep-widget-kill-content)
 			       map)
   "Widget menu used for text widgets with history.
 Binds M-up and M-down to one step in history up and down, respectively.")
@@ -570,6 +580,18 @@ If the value of OLD is nil no old widget is deleted."
     (setq wid (apply #'widget-create args))
     (when (symbolp old)
       (set old wid))))
+
+(defun elgrep-widget-kill-content (point &optional copy-as-kill)
+  "Kill content of widget at POINT.
+Copy region if COPY-AS-KILL is non-nil."
+  (interactive "d\nP")
+  (if-let* ((wid (widget-at point))
+	    (b (widget-field-start wid))
+	    (e (widget-field-end wid)))
+      (if copy-as-kill
+	  (copy-region-as-kill b e)
+	(kill-region b e))
+    (message "Point not in text field")))
 
 (defun elgrep-wid-dir-to-internal (_wid value)
   "Assert that the value of WID is a dir and return VALUE."
@@ -634,6 +656,11 @@ Call `widget-default-notify' with THIS and REST."
 	  (elgrep-record-widget :tag "Begin"))
 	  :notify #'elgrep-record-list-notify
 	  :elgrep-record-end-widget nil)
+
+(define-widget 'elgrep-regexp-or-function-widget 'menu-choice
+  "Widget type offering a regexp or a function."
+  :value "" :args '((regexp :tag "Regexp")
+		   (function :tag "Function")))
 
 (define-widget 'elgrep-context-widget 'menu-choice
   "Widget type for `elgrep-w-c-beg' and `elgrep-w-c-end'."
@@ -1117,10 +1144,10 @@ Otherwise add a unnamed command at the top of WIDGET."
 Reset the menu entries if RESET is non-nil.
 You can adjust the parameters there and start `elgrep'."
   (interactive "P")
-  (if (and (buffer-live-p (get-buffer "*elgrep-menu*"))
-	   (null reset))
-      (switch-to-buffer "*elgrep-menu*")
-    (switch-to-buffer "*elgrep-menu*")
+  (unless
+      (prog1 (and (buffer-live-p (get-buffer "*elgrep-menu*"))
+		  (null reset))
+	(switch-to-buffer "*elgrep-menu*"))
     (elgrep-menu-mode)
     (setq-local elgrep-menu-id elgrep-menu-id)
     (cl-incf (default-value 'elgrep-menu-id))
@@ -1165,10 +1192,11 @@ Hint: Try <M-tab> for completion, and <M-up>/<M-down> for history access.
 							    :prompt-history 'elgrep-file-name-re-hist
 							    :keymap elgrep-menu-hist-map
 							    :format "File Name Regular Expression: %v" (elgrep-default-filename-regexp default-directory)))
-    (setq-local elgrep-w-exclude-file-re (elgrep-widget-create 'regexp
-							       :prompt-history 'regexp-history
+    (setq-local elgrep-w-exclude-file-re (elgrep-widget-create 'elgrep-regexp-or-function-widget
+							       :prompt-history 'elgrep-exclude-file-re-history
 							       :keymap elgrep-menu-hist-map
-							       :format "Exclude File Name Regular Expression (ignored when empty): %v" ""))
+							       :tag "Exclude File Name Regexp or Filter (ignored when empty)"
+							       :value ""))
     (setq-local elgrep-w-dir-re (elgrep-widget-create 'regexp
 						      :prompt-history 'regexp-history
 						      :keymap elgrep-menu-hist-map
@@ -1248,6 +1276,7 @@ Otherwise a new elgrep call is added."))
     (when-let ((choice (car (widget-get elgrep-w-re :children)))
 	       (re (or (car-safe (widget-get choice :children)) choice)))
       (goto-char (widget-field-start re)))
+    (local-set-key (kbd "C-c C-c") #'elgrep-menu-elgrep)
     (buffer-enable-undo)))
 
 (defun elgrep-get-formatter ()
@@ -1571,6 +1600,8 @@ Inputs: format string \"%s:%d:%s\n\", file-name, line number,
 :exclude-file-re
 Regular expression matching the files that should not be grepped.
 Do not exclude files if this option is nil, unset, or the empty string.
+Can also be a filter function that gets the full list of file names
+as argument and should return the filtered list to be used for `elgrep'.
 Defaults to nil.
 
 :dir-re
@@ -1822,6 +1853,19 @@ Each match is a list of sub-matches.
 Each submatch is a plist of :match, :context, :line,
 :linestart, :beg and :end.
 
+FILE-NAME-RE can also be a list of FILE-NAME-MATCHERs.
+
+Each FILE-NAME-MATCHER can be a regular expression
+or a list of a regular expression and substitution strings
+\(RE FILTER1 FILTER2 ...)
+The FILTERs are treated as regular expressions but the references
+like \\1 are inserted in a quoted form (via `regexp-quote').
+
+If SUBST1 starts with ?\\! then file names matching SUBST1
+without the leading ?\\! will be filtered out.
+
+Example: (\"\\\\(.*\\\\)\\.k\\\\'\" \"!\\\\1\\.\\\\(h\\\\|cpp\\\\)\\\\'\")
+
 See `elgrep' for the valid options in plist OPTIONS."
   (setq dir (elgrep-dir-name dir))
   (with-current-buffer (get-buffer-create (or
@@ -1845,8 +1889,15 @@ See `elgrep' for the valid options in plist OPTIONS."
 	  (exclude-file-re (plist-get options :exclude-file-re))
 	  (symlink (plist-get options :symlink))
 	  (file-fun (plist-get options :file-fun)))
-      (when (and exclude-file-re (null (string-equal exclude-file-re "")))
+      (cond
+       ((or (null exclude-file-re)
+	    (and (stringp exclude-file-re) (string-equal exclude-file-re ""))))
+       ((stringp exclude-file-re)
 	(setq files (cl-remove-if (lambda (fname) (string-match exclude-file-re fname)) files)))
+       ((functionp exclude-file-re)
+	(setq files (funcall exclude-file-re files)))
+       (t
+	(error "Expect regexp or filter function as value for option :exclude-file-re")))
       (unless symlink
 	(setq files (cl-remove-if #'file-symlink-p files)))
       (when (functionp file-fun)
@@ -1949,7 +2000,8 @@ See `elgrep' for the valid options in the plist OPTIONS."
 	      (if re
 		  (progn
 		    (elgrep-list-matches filematches options)
-		    (elgrep-mode))
+		    (elgrep-mode)
+		    (goto-char (point-min)))
 		(elgrep-dired-files (mapcar 'car filematches)))
 	      (setq elgrep-args (append
 				 (list dir file-name-re re)
@@ -2047,6 +2099,132 @@ Abort if B or E is in the middle of a read-only region."
     (signal 'text-read-only nil))
   (let ((inhibit-read-only t))
     (delete-region b e)))
+
+(defun elgrep-compilation-message-at-point (&optional pt)
+  "Return compilation message corresponding to PT."
+  (or (compilation-buffer-p (current-buffer))
+      (error "Not in a compilation buffer"))
+  (or pt (setq pt (point)))
+  (let ((msg (or (get-text-property pt 'compilation-message)
+		 (and
+		  (setq pt (previous-single-property-change pt 'compilation-message))
+		  (get-text-property (1- pt) 'compilation-message)))))
+    msg))
+
+(defun elgrep-beginning-of-compilation-message (&optional pt)
+  "Return position of compilation message at PT.
+Return nil if PT is a position before the first compilation message."
+  (interactive)
+  (or (compilation-buffer-p (current-buffer))
+      (error "Not in a compilation buffer"))
+  (or pt (setq pt (point)))
+  (save-restriction
+    (widen)
+    (compilation--ensure-parse pt)
+    (if (get-text-property pt 'compilation-message)
+	(if (or (eq pt (point-min))
+		(null (get-text-property (1- pt) 'compilation-message)))
+	    pt
+	  (previous-single-property-change pt 'compilation-message))
+      (and
+       (setq pt (or
+		 (and (get-text-property (1- pt) 'compilation-message) (point))
+		 (previous-single-property-change pt 'compilation-message)))
+       (or (previous-single-property-change pt 'compilation-message) (point-min))))))
+
+(defun elgrep-end-of-compilation-message (&optional pt)
+  "Return end of compilation message at PT.
+Returns nil if PT is a potision before the first compilation message."
+  (interactive)
+  (or (compilation-buffer-p (current-buffer))
+      (error "Not in a compilation buffer"))
+  (or pt (setq pt (point)))
+  (save-restriction
+    (widen)
+    (compilation--ensure-parse pt)
+    (when (setq pt (elgrep-beginning-of-compilation-message pt))
+      (setq pt (next-single-property-change pt 'compilation-message))
+      (or (next-single-property-change pt 'compilation-message)
+	  (point-max)))))
+
+(defun elgrep-kill-compilation-message (&optional pt)
+  "Kill compilation message at PT."
+  (interactive)
+  (unless pt (setq pt (point)))
+  (let ((b (elgrep-beginning-of-compilation-message pt))
+	(e (elgrep-end-of-compilation-message pt))
+	(inhibit-read-only t))
+    (when (and b e)
+      (kill-region b e))))
+
+(define-key elgrep-mode-map (kbd "C-c C-k") #'elgrep-kill-compilation-message)
+(define-key elgrep-mode-map (kbd "C-c C--") #'elgrep-kill-compilation-message)
+
+(defun elgrep-parse-compilation-message (&optional end rules)
+  "Parse next compilation message up to END.
+Use RULES or `compilation-error-regexp-alist' for parsing.
+Return an alist with keys: file, line, col, type, link.
+Each key maps to a list of the matching string, the beginning of the match
+and the end of the match."
+  ;; Partially stolen from `compilation-parse-errors':
+  (setq rules (or rules compilation-error-regexp-alist))
+  (let (ret)
+    (while rules
+      (let ((item (car rules))
+	    (number-entry (lambda (subexpr)
+			    (if (numberp subexpr)
+				(list
+				 (string-to-number (match-string subexpr))
+				 (match-beginning subexpr)
+				 (match-end subexpr))
+			      (list (funcall subexpr))))))
+	(if (symbolp item)
+            (setq item (cdr (assq item
+				  compilation-error-regexp-alist-alist))))
+	(let ((file (nth 1 item))
+              (line (nth 2 item))
+              (col (nth 3 item))
+              (type (nth 4 item))
+	      (link (nth 5 item))
+              (pat (car item)))
+	  (cond
+	   ((not (memq 'omake compilation-error-regexp-alist)) nil)
+	   ((string-match "\\`\\([^^]\\|\\^\\( \\*\\|\\[\\)\\)" pat)
+            nil) ;; Not anchored or anchored but already allows empty spaces.
+	   (t (setq pat (concat "^\\(?:      \\)?" (substring pat 1)))))
+	  (if (consp file)	(setq file (car file)))
+	  (if (consp line)	(setq line (car line)))
+	  (if (consp col)	(setq col (car col)))
+	  (unless (or (null link) (integerp link))
+            (error "HYPERLINK should be an integer: %s" link))
+	  (if (re-search-forward pat end t)
+	      (setq rules nil
+		    ret
+		    `(
+		      (file ,(match-string file) ,(match-beginning file) ,(match-end file))
+		      (line . ,(funcall number-entry line))
+		      (col . ,(funcall number-entry col))
+		      (type ,type)
+		      (link . ,(and link
+				    (list
+				     (match-string link)
+				     (match-beginning link)
+				     (match-end link)))))))
+	  (setq rules (cdr rules)))))
+    ret))
+
+(defun elgrep-compilation-message-modify (expr)
+  "Apply EXPR to all compilation messages following point.
+Thereby, the symbols 'file, 'line, 'col, 'type, 'link
+are locally let-bound corresponding to the current
+compilation message.
+The values are those returned by `elgrep-parse-compilation-message'."
+  (interactive "xLisp expression with local file, line, col, type, link:")
+  (save-excursion
+    (let (msg
+	  (inhibit-read-only t))
+      (while (setq msg (elgrep-parse-compilation-message))
+	(eval expr msg)))))
 
 (defun elgrep-save-collect ()
   "Collect all entries from the current elgrep result buffer.
@@ -2515,6 +2693,33 @@ The ARGS are the same as for `re-search-forward'.
   (forward-sexp)
   (point))
 
+(defun elgrep/file-filter-modified-extension (files extension filter-extension)
+  "Return a filter function modifying a list of file names.
+The filter constructs a regexp that matches all basenames
+of the files with EXTENSION (a regexp).
+FILTER-EXTENSION is added to the end of the regexp.
+The returned filter removes all files matchting the extented
+regexp from the list of file names."
+  (let
+      ((re
+	(concat
+	 (regexp-opt
+	  (delq
+	   nil
+	   (mapcar
+	    (lambda (fn)
+	      (when
+		  (string-match extension
+				(file-name-extension fn))
+		(file-name-base fn)))
+	    files)))
+	 filter-extension)))
+    (cl-remove-if
+     (lambda
+       (fn)
+       (string-match re fn))
+     files)))
+
 (defmacro elgrep/m (&rest args)
   "Call `elgrep' with unevaluated ARGS."
   `(apply #'elgrep '(,@args)))
@@ -2523,6 +2728,13 @@ The ARGS are the same as for `re-search-forward'.
   "Call `elgrep' interactively with unevaluated ARGS.
 The interactive call is accomplished by appending (:interactive t) to ARGS."
   `(apply #'elgrep '(,@args :interactive t)))
+
+(defvar elgrep/1 nil
+  "Special variable that can be used in elgrep commands.")
+(defvar elgrep/2 nil
+  "Special variable that can be used in elgrep commands.")
+(defvar elgrep/3 nil
+  "Special variable that can be used in elgrep commands.")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (provide 'elgrep)
