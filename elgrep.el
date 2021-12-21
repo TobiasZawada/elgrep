@@ -1625,12 +1625,12 @@ and search with the help of the library async otherwise.
 :maxdepth Maximal depth. Defaults to the value of `most-positive-fixnum'.
 
 :depth Internal. Should not be used."
-  (interactive (let ((dir (read-directory-name "Directory:")))
+  (interactive (let ((dir (read-directory-name "Directory: ")))
 		 (append (list dir
 			       (let ((default-file-name-regexp (elgrep-default-filename-regexp dir)))
-				 (read-regexp (concat "File-name regexp (defaults:\"\" and \"" default-file-name-regexp "\"):") (list "" default-file-name-regexp) 'elgrep-file-name-re-hist)
+				 (read-regexp (concat "File-name regexp (defaults:\"\" and \"" default-file-name-regexp "\"): ") (list "" default-file-name-regexp) 'elgrep-file-name-re-hist)
 				 )
-			       (read-regexp "Emacs regexp:" nil 'elgrep-re-hist))
+			       (read-regexp "Emacs regexp: " nil 'elgrep-re-hist))
 			 (list :recursive current-prefix-arg
 			       :interactive t ;; during debugging `called-interactively-p' returns nil
 			       ))))
