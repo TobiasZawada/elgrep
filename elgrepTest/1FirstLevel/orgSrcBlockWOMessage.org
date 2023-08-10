@@ -8,4 +8,4 @@
 
 * Another section in the org file
 
-Some text in the second sectiong of the org file.
+Some text in the second section of the org file.

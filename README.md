@@ -55,15 +55,15 @@ List of all menu items of `elgrep-menu`:
   In general the functions given as beginning and end of a record is called without arguments and should return buffer positions. The end position must be at or behind the beginning position. The search for the beginning of the next record starts at the end of the current one.  
   An example for useful regular expressions are for the record beginning the empty string matching the line beginning `^` and for the record end the regular expression matching the empty string at the line end `$`. With this combination each line of the file is one record. (Note, that empty lines are empty records.) That makes especially sense if the search expression is a list of regular expressions where one record must fulfill multiple requirements. For an instance one string must occur on a matching line but another string may not occur on that line.
 - **End of Record**: See previous item.
-- **Context Lines Before the Match**: While the record delimiters bound the search the context lines determine how many lines before and after the match are output in the `<*elgrep*>` result buffer. The input can be a number, a regexp, an Elisp function, or a Elisp expression:
-  - Number: Output that many lines before the match. The default value 0 limits the output of to the line with the match.
-  - Regular expression: Elgrep searches backward starting at the Expression match. It starts the output at the line with the match for the beginning of the context.
-  - Elisp Function: That function is called with no arguments and should put point on the line starting the context.
+- **Context Before the Match**: While the record delimiters bound the search the context determine what is output before and after the match in the `<*elgrep*>` result buffer. You can choose between context *Line*s and context *Character*s. The *Boundary* can be a number, a regexp, an Elisp function, or a Elisp expression:
+  - Number: Output that many lines or characters before the match. The default value 0 limits the output of to the line/character with the beginning of the match.
+  - Regular expression: Elgrep searches backward starting at the Expression match. It starts the output at the line/character with the match for the beginning of the context.
+  - Elisp Function: That function is called with no arguments and should put point on the line/character starting the context.
   - Elisp Expression: That expression is evaluated with `eval`. Example:  
     `(elgrep/re-search-goto-match-beginning "^[[:space:]]*#\\+begin_src[[:space:]]+emacs-lisp" nil 'noErr)`  
     Thereby, `elgrep/re-search-goto-match-beginning` is one of the utility functions for the user provided by Elgrep.
     Just call the completion for the help on function argument via <kbd>C-h f</kbd> `elgrep/` <kbd>&lt;TAB&gt;</kbd> to see the full list.
-- **Context Lines After the Match**: Analogous to the previous item.
+- **Context After the Match**: Analogous to the previous item.
 - **Case Sensitivity**: Determines whether the expression search is case sensitive. The default setting takes the value of the variable `case-fold-search`.
 - **Buffer Initialization**: Before the expression search starts the file contents is load into a buffer `< *elgrep-search*>`. By default the buffer contents is treated as simple text without special text syntax and properties. If you use syntax dependent functions like `forward-sexp` you should probably initialize the buffer with the syntax table for the file type or even with a full major-mode initialization.
 - **File Predicate Function**: Predicate function called with the absolute file path as argument. The function should return non-nil if that file should be searched.
@@ -94,8 +94,8 @@ File Name Regular Expression: \.org\'
 Recurse into subdirectories [X]
 Beginning of Record: Regexp: ^[[:space:]]*#\+begin_src[[:space:]]+emacs-lisp
 End of Record: Regexp: ^[[:space:]]*#\+end_src\>
-Context Lines Before The Match: Function or Elisp Form: elgrep/point-min
-Context Lines After The Match: Function or Elisp Form: elgrep/point-max
+Context before match: Line Boundary: Function or Elisp Form: elgrep/point-min
+Context after match: Line Boundary: Function or Elisp Form: elgrep/point-max
 ```
 The following figure shows a part of the `<*elgrep*>` buffer after the search:
 ![Elgrep output of Org source block search](elgrepTest/elgrepOrgSrc.png)
@@ -115,8 +115,8 @@ File Name Regular Expression: \.bib\'
 Recurse into subdirectories [X]
 Beginning of Record: Regexp: ^@[[:alpha:]]+
 End of Record: Function: elgrep/forward-sexp
-Context Lines Before The Match: Function: elgrep/point-min
-Context Lines After The Match: Function: elgrep/point-max
+Context before match: Line Boundary: Function or Elisp Form: elgrep/point-min
+Context after match: Line Boundary: Function or Elisp Form: elgrep/point-max
 Buffer initialization: [Options] Set syntax table
 Search function: cexp-search-forward
 ```
