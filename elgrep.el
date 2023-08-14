@@ -1690,9 +1690,9 @@ OPTIONS is a plist of options as for `elgrep'."
       (expand-file-name (directory-file-name (substitute-in-file-name dir)))
     default-directory))
 
-(defsubst elgrep-directory-files (directory &optional full match nosort count)
+(defsubst elgrep-directory-files (directory &optional full match nosort)
   "Run `directory-files' protected by `condition-case'.
-DIRECTORY, FULL, MATCH, NOSORT and COUNT are the arguments of `directory-files'.
+DIRECTORY, FULL, MATCH and NOSORT are the arguments of `directory-files'.
 Windows can read-protect directories even if `file-accessible-directory-p'
 returns t.
 
@@ -1708,7 +1708,7 @@ Return nil if reading of the directory fails."
 	     (files (cl-delete-if
 		     (lambda (file)
 		       (member file '("." "..")))
-		     (funcall #'directory-files directory full match-re nosort count))))
+		     (funcall #'directory-files directory full match-re nosort))))
 	(if (functionp match)
 	    (funcall match files)
 	  files))
