@@ -2799,6 +2799,7 @@ Unconditionally return the value of `elgrep-data-file'."
   (interactive)
   (when (stringp elgrep-data-file)
     (with-temp-buffer
+      (insert ";;; -*- lexical-binding: t -*-\n")
       (let (print-level print-length)
 	(insert (format "%S" `(setq elgrep-call-list (quote ,elgrep-call-list)))))
       (write-file
